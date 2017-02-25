@@ -748,8 +748,7 @@ static void ir_do_keydown(struct rc_dev *dev, enum rc_proto protocol,
 		.keycode = keycode
 	};
 
-	if (dev->allowed_protocols != RC_PROTO_BIT_CEC)
-		ir_lirc_scancode_event(dev, &sc);
+	ir_lirc_scancode_event(dev, &sc);
 
 	if (new_event && dev->keypressed)
 		ir_do_keyup(dev, false);

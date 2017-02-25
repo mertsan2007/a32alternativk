@@ -337,15 +337,14 @@ again:
 				del_timer(&data->rx_timeout);
 			}
 			/* Pass data to keyboard buffer parser */
-			ir_mce_kbd_process_keyboard_data(dev, scancode);
-			spin_unlock(&data->keylock);
+			ir_mce_kbd_process_keyboard_data(data->idev, scancode);
 			lsc.rc_proto = RC_PROTO_MCIR2_KBD;
 			break;
 		case MCIR2_MOUSE_NBITS:
 			scancode = data->body & 0x1fffff;
 			dev_dbg(&dev->dev, "mouse data 0x%06x\n", scancode);
 			/* Pass data to mouse buffer parser */
-			ir_mce_kbd_process_mouse_data(dev, scancode);
+			ir_mce_kbd_process_mouse_data(data->idev, scancode);
 			lsc.rc_proto = RC_PROTO_MCIR2_MSE;
 			break;
 		default:
