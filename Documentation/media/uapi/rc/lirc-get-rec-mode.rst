@@ -34,8 +34,7 @@ Description
 ===========
 
 Get/set supported receive modes. Only :ref:`LIRC_MODE_MODE2 <lirc-mode-mode2>`
-and :ref:`LIRC_MODE_SCANCODE <lirc-mode-scancode>` are supported.
-Use :ref:`lirc_get_features` to find out which modes the driver supports.
+is supported for IR receive.
 
 Return Value
 ============

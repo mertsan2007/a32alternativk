@@ -67,13 +67,6 @@ LIRC features
 
     Unused. Kept just to avoid breaking uAPI.
 
-.. _LIRC-CAN-REC-SCANCODE:
-
-``LIRC_CAN_REC_SCANCODE``
-
-    This is a scancode driver for receiving. This means that
-    :ref:`LIRC_MODE_SCANCODE <lirc-mode-SCANCODE>` is used.
-
 .. _LIRC-CAN-SET-SEND-CARRIER:
 
 ``LIRC_CAN_SET_SEND_CARRIER``
@@ -183,7 +176,6 @@ LIRC features
 ``LIRC_CAN_SEND_LIRCCODE``
 
     Unused. Kept just to avoid breaking uAPI.
-
 
 Return Value
 ============
