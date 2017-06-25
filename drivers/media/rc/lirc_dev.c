@@ -273,36 +273,18 @@ EXPORT_SYMBOL(lirc_unregister_driver);
 
 int lirc_dev_fop_open(struct inode *inode, struct file *file)
 {
-	struct irctl *ir;
+	struct irctl *ir = container_of(inode->i_cdev, struct irctl, cdev);
 	int retval;
-
-	if (iminor(inode) >= MAX_IRCTL_DEVICES) {
-		pr_err("open result for %d is -ENODEV\n", iminor(inode));
-		return -ENODEV;
-	}
-
-	if (mutex_lock_interruptible(&lirc_dev_lock))
-		return -ERESTARTSYS;
-
-	ir = irctls[iminor(inode)];
-	mutex_unlock(&lirc_dev_lock);
-
-	if (!ir) {
-		retval = -ENODEV;
-		goto error;
-	}
 
 	dev_dbg(ir->d.dev, LOGHEAD "open called\n", ir->d.name, ir->d.minor);
 
-	if (ir->open) {
-		retval = -EBUSY;
-		goto error;
-	}
+	if (ir->open)
+		return -EBUSY;
 
 	if (ir->d.rdev) {
 		retval = rc_open(ir->d.rdev);
 		if (retval)
-			goto error;
+			return retval;
 	}
 
 	if (ir->buf)
@@ -310,29 +292,19 @@ int lirc_dev_fop_open(struct inode *inode, struct file *file)
 
 	ir->open++;
 
+	lirc_init_pdata(inode, file);
 	nonseekable_open(inode, file);
 
 	return 0;
-
-error:
-	return retval;
 }
 
 static int ir_lirc_close(struct inode *inode, struct file *file)
 {
-	struct lirc_fh *fh = file->private_data;
-	struct rc_dev *dev = fh->rc;
-	unsigned long flags;
+	struct irctl *ir = file->private_data;
+	int ret;
 
-	spin_lock_irqsave(&dev->lirc_fh_lock, flags);
-	list_del(&fh->list);
-	spin_unlock_irqrestore(&dev->lirc_fh_lock, flags);
-
-	if (dev->driver_type == RC_DRIVER_IR_RAW)
-		kfifo_free(&fh->rawir);
-	if (dev->driver_type != RC_DRIVER_IR_RAW_TX)
-		kfifo_free(&fh->scancodes);
-	kfree(fh);
+	ret = mutex_lock_killable(&lirc_dev_lock);
+	WARN_ON(ret);
 
 	rc_close(dev);
 	put_device(&dev->dev);
@@ -343,30 +315,11 @@ static int ir_lirc_close(struct inode *inode, struct file *file)
 static ssize_t ir_lirc_transmit_ir(struct file *file, const char __user *buf,
 				   size_t n, loff_t *ppos)
 {
-	struct lirc_fh *fh = file->private_data;
-	struct rc_dev *dev = fh->rc;
-	unsigned int *txbuf;
-	struct ir_raw_event *raw = NULL;
-	ssize_t ret;
-	size_t count;
-	ktime_t start;
-	s64 towait;
-	unsigned int duration = 0; /* signal duration in us */
-	int i;
+	struct irctl *ir = file->private_data;
+	unsigned int ret;
 
-	ret = mutex_lock_interruptible(&dev->lock);
-	if (ret)
-		return ret;
-
-	if (!dev->registered) {
-		ret = -ENODEV;
-		goto out_unlock;
-	}
-
-	if (!dev->tx_ir) {
-		ret = -EINVAL;
-		goto out_unlock;
-	}
+	if (!ir->attached)
+		return POLLHUP | POLLERR;
 
 	if (fh->send_mode == LIRC_MODE_SCANCODE) {
 		struct lirc_scancode scan;
@@ -494,17 +447,9 @@ out_unlock:
 static long ir_lirc_ioctl(struct file *file, unsigned int cmd,
 			  unsigned long arg)
 {
-	struct lirc_fh *fh = file->private_data;
-	struct rc_dev *dev = fh->rc;
-	u32 __user *argp = (u32 __user *)(arg);
-	u32 val = 0;
-	int ret;
-
-	if (_IOC_DIR(cmd) & _IOC_WRITE) {
-		ret = get_user(val, argp);
-		if (ret)
-			return ret;
-	}
+	struct irctl *ir = file->private_data;
+	__u32 mode;
+	int result = 0;
 
 	ret = mutex_lock_interruptible(&dev->lock);
 	if (ret)
@@ -723,36 +668,12 @@ out:
 static unsigned int ir_lirc_poll(struct file *file,
 				 struct poll_table_struct *wait)
 {
-	struct lirc_fh *fh = file->private_data;
-	struct rc_dev *rcdev = fh->rc;
-	unsigned int events = 0;
+	struct irctl *ir = file->private_data;
+	unsigned char *buf;
+	int ret = 0, written = 0;
+	DECLARE_WAITQUEUE(wait, current);
 
-	poll_wait(file, &fh->wait_poll, wait);
-
-	if (!rcdev->registered) {
-		events = EPOLLHUP | EPOLLERR;
-	} else if (rcdev->driver_type != RC_DRIVER_IR_RAW_TX) {
-		if (fh->rec_mode == LIRC_MODE_SCANCODE &&
-		    !kfifo_is_empty(&fh->scancodes))
-			events = EPOLLIN | EPOLLRDNORM;
-
-		if (fh->rec_mode == LIRC_MODE_MODE2 &&
-		    !kfifo_is_empty(&fh->rawir))
-			events = EPOLLIN | EPOLLRDNORM;
-	}
-
-	return events;
-}
-
-static ssize_t ir_lirc_read_mode2(struct file *file, char __user *buffer,
-				  size_t length)
-{
-	struct lirc_fh *fh = file->private_data;
-	struct rc_dev *rcdev = fh->rc;
-	unsigned int copied;
-	int ret;
-
-	if (length < sizeof(unsigned int) || length % sizeof(unsigned int))
+	if (!LIRC_CAN_REC(ir->d.features))
 		return -EINVAL;
 
 	do {
@@ -914,21 +835,19 @@ out_ida:
 	return err;
 }
 
-void ir_lirc_unregister(struct rc_dev *dev)
+void lirc_init_pdata(struct inode *inode, struct file *file)
 {
-	unsigned long flags;
-	struct lirc_fh *fh;
+	struct irctl *ir = container_of(inode->i_cdev, struct irctl, cdev);
 
-	dev_dbg(&dev->dev, "lirc_dev: driver %s unregistered from minor = %d\n",
-		dev->driver_name, MINOR(dev->lirc_dev.devt));
+	file->private_data = ir;
+}
+EXPORT_SYMBOL(lirc_init_pdata);
 
-	spin_lock_irqsave(&dev->lirc_fh_lock, flags);
-	list_for_each_entry(fh, &dev->lirc_fh, list)
-		wake_up_poll(&fh->wait_poll, EPOLLHUP | EPOLLERR);
-	spin_unlock_irqrestore(&dev->lirc_fh_lock, flags);
+void *lirc_get_pdata(struct file *file)
+{
+	struct irctl *ir = file->private_data;
 
-	cdev_device_del(&dev->lirc_cdev, &dev->lirc_dev);
-	ida_simple_remove(&lirc_ida, MINOR(dev->lirc_dev.devt));
+	return ir->d.data;
 }
 
 int __init lirc_dev_init(void)
