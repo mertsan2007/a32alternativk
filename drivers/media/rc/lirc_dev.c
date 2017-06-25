@@ -198,16 +198,58 @@ static int ir_lirc_open(struct inode *inode, struct file *file)
 	nonseekable_open(inode, file);
 
 	return 0;
-out_kfifo:
-	if (dev->driver_type != RC_DRIVER_IR_RAW_TX)
-		kfifo_free(&fh->scancodes);
-out_rawir:
-	if (dev->driver_type == RC_DRIVER_IR_RAW)
-		kfifo_free(&fh->rawir);
-out_fh:
-	kfree(fh);
-	put_device(&dev->dev);
+}
+EXPORT_SYMBOL(lirc_unregister_driver);
 
+int lirc_dev_fop_open(struct inode *inode, struct file *file)
+{
+	struct irctl *ir;
+	int retval;
+
+	if (iminor(inode) >= MAX_IRCTL_DEVICES) {
+		pr_err("open result for %d is -ENODEV\n", iminor(inode));
+		return -ENODEV;
+	}
+
+	if (mutex_lock_interruptible(&lirc_dev_lock))
+		return -ERESTARTSYS;
+
+	ir = irctls[iminor(inode)];
+	mutex_unlock(&lirc_dev_lock);
+
+	if (!ir) {
+		retval = -ENODEV;
+		goto error;
+	}
+
+	dev_dbg(ir->d.dev, LOGHEAD "open called\n", ir->d.name, ir->d.minor);
+
+	if (ir->d.minor == NOPLUG) {
+		retval = -ENODEV;
+		goto error;
+	}
+
+	if (ir->open) {
+		retval = -EBUSY;
+		goto error;
+	}
+
+	if (ir->d.rdev) {
+		retval = rc_open(ir->d.rdev);
+		if (retval)
+			goto error;
+	}
+
+	if (ir->buf)
+		lirc_buffer_clear(ir->buf);
+
+	ir->open++;
+
+	nonseekable_open(inode, file);
+
+	return 0;
+
+error:
 	return retval;
 }
 
