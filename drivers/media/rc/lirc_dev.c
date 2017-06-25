@@ -29,7 +29,7 @@
 #include "rc-core-priv.h"
 #include <uapi/linux/lirc.h>
 
-#define LIRCBUF_SIZE	1024
+#define LOGHEAD		"lirc_dev (%s[%d]): "
 
 static dev_t lirc_base_dev;
 
@@ -129,8 +129,9 @@ void ir_lirc_raw_event(struct rc_dev *dev, struct ir_raw_event ev)
  */
 void ir_lirc_scancode_event(struct rc_dev *dev, struct lirc_scancode *lsc)
 {
-	unsigned long flags;
-	struct lirc_fh *fh;
+	struct irctl *ir;
+	unsigned int minor;
+	int err;
 
 	lsc->timestamp = ktime_get_ns();
 
@@ -139,11 +140,112 @@ void ir_lirc_scancode_event(struct rc_dev *dev, struct lirc_scancode *lsc)
 		if (kfifo_put(&fh->scancodes, *lsc))
 			wake_up_poll(&fh->wait_poll, EPOLLIN | EPOLLRDNORM);
 	}
-	spin_unlock_irqrestore(&dev->lirc_fh_lock, flags);
+
+	if (!d->dev) {
+		pr_err("dev pointer not filled in!\n");
+		return -EINVAL;
+	}
+
+	if (!d->fops) {
+		pr_err("fops pointer not filled in!\n");
+		return -EINVAL;
+	}
+
+	if (d->code_length < 1 || d->code_length > (BUFLEN * 8)) {
+		dev_err(d->dev, "code length must be less than %d bits\n",
+								BUFLEN * 8);
+		return -EBADRQC;
+	}
+
+	if (!d->rbuf && !(d->fops && d->fops->read &&
+			  d->fops->poll && d->fops->unlocked_ioctl)) {
+		dev_err(d->dev, "undefined read, poll, ioctl\n");
+		return -EBADRQC;
+	}
+
+	mutex_lock(&lirc_dev_lock);
+
+	/* find first free slot for driver */
+	for (minor = 0; minor < MAX_IRCTL_DEVICES; minor++)
+		if (!irctls[minor])
+			break;
+
+	if (minor == MAX_IRCTL_DEVICES) {
+		dev_err(d->dev, "no free slots for drivers!\n");
+		err = -ENOMEM;
+		goto out_lock;
+	}
+
+	ir = kzalloc(sizeof(struct irctl), GFP_KERNEL);
+	if (!ir) {
+		err = -ENOMEM;
+		goto out_lock;
+	}
+
+	mutex_init(&ir->irctl_lock);
+	irctls[minor] = ir;
+	d->irctl = ir;
+	d->minor = minor;
+
+	/* some safety check 8-) */
+	d->name[sizeof(d->name)-1] = '\0';
+
+	if (d->features == 0)
+		d->features = LIRC_CAN_REC_LIRCCODE;
+
+	ir->d = *d;
+
+	if (LIRC_CAN_REC(d->features)) {
+		err = lirc_allocate_buffer(irctls[minor]);
+		if (err) {
+			kfree(ir);
+			goto out_lock;
+		}
+		d->rbuf = ir->buf;
+	}
+
+	device_initialize(&ir->dev);
+	ir->dev.devt = MKDEV(MAJOR(lirc_base_dev), ir->d.minor);
+	ir->dev.class = lirc_class;
+	ir->dev.parent = d->dev;
+	ir->dev.release = lirc_release;
+	dev_set_name(&ir->dev, "lirc%d", ir->d.minor);
+
+	cdev_init(&ir->cdev, d->fops);
+	ir->cdev.owner = ir->d.owner;
+	ir->cdev.kobj.parent = &ir->dev.kobj;
+
+	err = cdev_add(&ir->cdev, ir->dev.devt, 1);
+	if (err)
+		goto out_free_dev;
+
+	ir->attached = 1;
+
+	err = device_add(&ir->dev);
+	if (err)
+		goto out_cdev;
+
+	mutex_unlock(&lirc_dev_lock);
+
+	get_device(ir->dev.parent);
+
+	dev_info(ir->d.dev, "lirc_dev: driver %s registered at minor = %d\n",
+		 ir->d.name, ir->d.minor);
+
+	return 0;
+
+out_cdev:
+	cdev_del(&ir->cdev);
+out_free_dev:
+	put_device(&ir->dev);
+out_lock:
+	mutex_unlock(&lirc_dev_lock);
+
+	return err;
 }
 EXPORT_SYMBOL_GPL(ir_lirc_scancode_event);
 
-static int ir_lirc_open(struct inode *inode, struct file *file)
+void lirc_unregister_driver(struct lirc_driver *d)
 {
 	struct rc_dev *dev = container_of(inode->i_cdev, struct rc_dev,
 					  lirc_cdev);
@@ -151,53 +253,30 @@ static int ir_lirc_open(struct inode *inode, struct file *file)
 	unsigned long flags;
 	int retval;
 
-	if (!fh)
-		return -ENOMEM;
+	if (!d || !d->irctl)
+		return;
 
-	get_device(&dev->dev);
+	ir = d->irctl;
 
-	if (!dev->registered) {
-		retval = -ENODEV;
-		goto out_fh;
+	mutex_lock(&lirc_dev_lock);
+
+	dev_dbg(ir->d.dev, "lirc_dev: driver %s unregistered from minor = %d\n",
+		d->name, d->minor);
+
+	ir->attached = 0;
+	if (ir->open) {
+		dev_dbg(ir->d.dev, LOGHEAD "releasing opened driver\n",
+			d->name, d->minor);
+		wake_up_interruptible(&ir->buf->wait_poll);
 	}
-
-	if (dev->driver_type == RC_DRIVER_IR_RAW) {
-		if (kfifo_alloc(&fh->rawir, MAX_IR_EVENT_SIZE, GFP_KERNEL)) {
-			retval = -ENOMEM;
-			goto out_fh;
-		}
-	}
-
-	if (dev->driver_type != RC_DRIVER_IR_RAW_TX) {
-		if (kfifo_alloc(&fh->scancodes, 32, GFP_KERNEL)) {
-			retval = -ENOMEM;
-			goto out_rawir;
-		}
-	}
-
-	fh->send_mode = LIRC_MODE_PULSE;
-	fh->rc = dev;
-	fh->send_timeout_reports = true;
-
-	if (dev->driver_type == RC_DRIVER_SCANCODE)
-		fh->rec_mode = LIRC_MODE_SCANCODE;
-	else
-		fh->rec_mode = LIRC_MODE_MODE2;
 
 	retval = rc_open(dev);
 	if (retval)
 		goto out_kfifo;
 
-	init_waitqueue_head(&fh->wait_poll);
-
-	file->private_data = fh;
-	spin_lock_irqsave(&dev->lirc_fh_lock, flags);
-	list_add(&fh->list, &dev->lirc_fh);
-	spin_unlock_irqrestore(&dev->lirc_fh_lock, flags);
-
-	nonseekable_open(inode, file);
-
-	return 0;
+	device_del(&ir->dev);
+	cdev_del(&ir->cdev);
+	put_device(&ir->dev);
 }
 EXPORT_SYMBOL(lirc_unregister_driver);
 
@@ -223,11 +302,6 @@ int lirc_dev_fop_open(struct inode *inode, struct file *file)
 	}
 
 	dev_dbg(ir->d.dev, LOGHEAD "open called\n", ir->d.name, ir->d.minor);
-
-	if (ir->d.minor == NOPLUG) {
-		retval = -ENODEV;
-		goto error;
-	}
 
 	if (ir->open) {
 		retval = -EBUSY;
@@ -445,9 +519,10 @@ static long ir_lirc_ioctl(struct file *file, unsigned int cmd,
 	if (ret)
 		return ret;
 
-	if (!dev->registered) {
-		ret = -ENODEV;
-		goto out;
+	if (!ir->attached) {
+		dev_err(ir->d.dev, LOGHEAD "ioctl result = -ENODEV\n",
+			ir->d.name, ir->d.minor);
+		return -ENODEV;
 	}
 
 	switch (cmd) {
