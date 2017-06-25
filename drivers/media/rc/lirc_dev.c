@@ -30,19 +30,6 @@
 
 static dev_t lirc_base_dev;
 
-struct irctl {
-	struct lirc_dev d;
-	bool attached;
-	int open;
-
-	struct mutex mutex;	/* protect from simultaneous accesses */
-	struct lirc_buffer *buf;
-	bool buf_internal;
-
-	struct device dev;
-	struct cdev cdev;
-};
-
 /* Used to keep track of allocated lirc devices */
 #define LIRC_MAX_DEVICES 256
 static DEFINE_IDA(lirc_ida);
@@ -50,94 +37,74 @@ static DEFINE_IDA(lirc_ida);
 /* Only used for sysfs but defined to void otherwise */
 static struct class *lirc_class;
 
-static void lirc_free_buffer(struct irctl *ir)
+static void lirc_release_device(struct device *ld)
 {
-	put_device(ir->dev.parent);
+	struct lirc_dev *d = container_of(ld, struct lirc_dev, dev);
 
-	if (ir->buf_internal) {
-		lirc_buffer_free(ir->buf);
-		kfree(ir->buf);
-		ir->buf = NULL;
+	put_device(d->dev.parent);
+
+	if (d->buf_internal) {
+		lirc_buffer_free(d->buf);
+		kfree(d->buf);
+		d->buf = NULL;
 	}
+	kfree(d);
+	module_put(THIS_MODULE);
 }
 
-static void lirc_release(struct device *ld)
+static int lirc_allocate_buffer(struct lirc_dev *d)
 {
-	struct irctl *ir = container_of(ld, struct irctl, dev);
+	int err;
 
-	lirc_free_buffer(ir);
-	kfree(ir);
-}
-
-static int lirc_allocate_buffer(struct irctl *ir)
-{
-	int err = 0;
-	struct lirc_dev *d = &ir->d;
-
-	if (d->rbuf) {
-		ir->buf = d->rbuf;
-		ir->buf_internal = false;
-	} else {
-		if (dev->gap) {
-			dev->gap_duration += ktime_to_ns(ktime_sub(ktime_get(),
-							 dev->gap_start));
-
-			/* Convert to ms and cap by LIRC_VALUE_MASK */
-			do_div(dev->gap_duration, 1000);
-			dev->gap_duration = min_t(u64, dev->gap_duration,
-						  LIRC_VALUE_MASK);
-
-			spin_lock_irqsave(&dev->lirc_fh_lock, flags);
-			list_for_each_entry(fh, &dev->lirc_fh, list)
-				kfifo_put(&fh->rawir,
-					  LIRC_SPACE(dev->gap_duration));
-			spin_unlock_irqrestore(&dev->lirc_fh_lock, flags);
-			dev->gap = false;
-		}
-
-		err = lirc_buffer_init(ir->buf, d->chunk_size, d->buffer_size);
-		if (err) {
-			kfree(ir->buf);
-			ir->buf = NULL;
-			goto out;
-		}
-
-		ir->buf_internal = true;
-		d->rbuf = ir->buf;
+	if (d->buf) {
+		d->buf_internal = false;
+		return 0;
 	}
 
-	/*
-	 * bpf does not care about the gap generated above; that exists
-	 * for backwards compatibility
-	 */
-	lirc_bpf_run(dev, sample);
+	d->buf = kmalloc(sizeof(*d->buf), GFP_KERNEL);
+	if (!d->buf)
+		return -ENOMEM;
 
-	spin_lock_irqsave(&dev->lirc_fh_lock, flags);
-	list_for_each_entry(fh, &dev->lirc_fh, list) {
-		if (LIRC_IS_TIMEOUT(sample) && !fh->send_timeout_reports)
-			continue;
-		if (kfifo_put(&fh->rawir, sample))
-			wake_up_poll(&fh->wait_poll, EPOLLIN | EPOLLRDNORM);
+	err = lirc_buffer_init(d->buf, d->chunk_size, d->buffer_size);
+	if (err) {
+		kfree(d->buf);
+		d->buf = NULL;
+		return err;
 	}
-	spin_unlock_irqrestore(&dev->lirc_fh_lock, flags);
+
+	d->buf_internal = true;
+	return 0;
 }
 
 struct lirc_dev *
 lirc_allocate_device(void)
 {
-	return kzalloc(sizeof(struct lirc_dev), GFP_KERNEL);
+	struct lirc_dev *d;
+
+	d = kzalloc(sizeof(*d), GFP_KERNEL);
+	if (d) {
+		mutex_init(&d->mutex);
+		device_initialize(&d->dev);
+		d->dev.class = lirc_class;
+		d->dev.release = lirc_release_device;
+		__module_get(THIS_MODULE);
+	}
+
+	return d;
 }
 EXPORT_SYMBOL(lirc_allocate_device);
 
 void lirc_free_device(struct lirc_dev *d)
 {
-	kfree(d);
+	if (!d)
+		return;
+
+	put_device(&d->dev);
 }
 EXPORT_SYMBOL(lirc_free_device);
 
 int lirc_register_device(struct lirc_dev *d)
 {
-	struct irctl *ir;
 	int minor;
 	int err;
 
@@ -149,8 +116,8 @@ int lirc_register_device(struct lirc_dev *d)
 			wake_up_poll(&fh->wait_poll, EPOLLIN | EPOLLRDNORM);
 	}
 
-	if (!d->dev) {
-		pr_err("dev pointer not filled in!\n");
+	if (!d->dev.parent) {
+		pr_err("dev parent pointer not filled in!\n");
 		return -EINVAL;
 	}
 
@@ -159,25 +126,25 @@ int lirc_register_device(struct lirc_dev *d)
 		return -EINVAL;
 	}
 
-	if (!d->rbuf && d->chunk_size < 1) {
+	if (!d->buf && d->chunk_size < 1) {
 		pr_err("chunk_size must be set!\n");
 		return -EINVAL;
 	}
 
-	if (!d->rbuf && d->buffer_size < 1) {
+	if (!d->buf && d->buffer_size < 1) {
 		pr_err("buffer_size must be set!\n");
 		return -EINVAL;
 	}
 
 	if (d->code_length < 1 || d->code_length > (BUFLEN * 8)) {
-		dev_err(d->dev, "code length must be less than %d bits\n",
-								BUFLEN * 8);
+		dev_err(&d->dev, "code length must be less than %d bits\n",
+			BUFLEN * 8);
 		return -EBADRQC;
 	}
 
-	if (!d->rbuf && !(d->fops && d->fops->read &&
-			  d->fops->poll && d->fops->unlocked_ioctl)) {
-		dev_err(d->dev, "undefined read, poll, ioctl\n");
+	if (!d->buf && !(d->fops && d->fops->read &&
+			 d->fops->poll && d->fops->unlocked_ioctl)) {
+		dev_err(&d->dev, "undefined read, poll, ioctl\n");
 		return -EBADRQC;
 	}
 
@@ -187,55 +154,34 @@ int lirc_register_device(struct lirc_dev *d)
 	if (d->features == 0)
 		d->features = LIRC_CAN_REC_LIRCCODE;
 
-	ir = kzalloc(sizeof(*ir), GFP_KERNEL);
-	if (!ir)
-		return -ENOMEM;
-
-	mutex_init(&ir->mutex);
-	ir->d = *d;
-
 	if (LIRC_CAN_REC(d->features)) {
-		err = lirc_allocate_buffer(ir);
-		if (err) {
-			kfree(ir);
+		err = lirc_allocate_buffer(d);
+		if (err)
 			return err;
-		}
-		d->rbuf = ir->buf;
 	}
 
 	minor = ida_simple_get(&lirc_ida, 0, LIRC_MAX_DEVICES, GFP_KERNEL);
-	if (minor < 0) {
-		lirc_free_buffer(ir);
-		kfree(ir);
+	if (minor < 0)
 		return minor;
-	}
 
-	d->irctl = ir;
 	d->minor = minor;
-	ir->d.minor = minor;
+	d->dev.devt = MKDEV(MAJOR(lirc_base_dev), d->minor);
+	dev_set_name(&d->dev, "lirc%d", d->minor);
 
-	device_initialize(&ir->dev);
-	ir->dev.devt = MKDEV(MAJOR(lirc_base_dev), ir->d.minor);
-	ir->dev.class = lirc_class;
-	ir->dev.parent = d->dev;
-	ir->dev.release = lirc_release;
-	dev_set_name(&ir->dev, "lirc%d", ir->d.minor);
+	cdev_init(&d->cdev, d->fops);
+	d->cdev.owner = d->owner;
+	d->attached = true;
 
-	cdev_init(&ir->cdev, d->fops);
-	ir->cdev.owner = ir->d.owner;
-	ir->attached = true;
-
-	err = cdev_device_add(&ir->cdev, &ir->dev);
+	err = cdev_device_add(&d->cdev, &d->dev);
 	if (err) {
 		ida_simple_remove(&lirc_ida, minor);
-		put_device(&ir->dev);
 		return err;
 	}
 
-	get_device(ir->dev.parent);
+	get_device(d->dev.parent);
 
-	dev_info(ir->d.dev, "lirc_dev: driver %s registered at minor = %d\n",
-		 ir->d.name, ir->d.minor);
+	dev_info(&d->dev, "lirc_dev: driver %s registered at minor = %d\n",
+		 d->name, d->minor);
 
 	return 0;
 }
@@ -243,91 +189,82 @@ EXPORT_SYMBOL(lirc_register_device);
 
 void lirc_unregister_device(struct lirc_dev *d)
 {
-	struct rc_dev *dev = container_of(inode->i_cdev, struct rc_dev,
-					  lirc_cdev);
-	struct lirc_fh *fh = kzalloc(sizeof(*fh), GFP_KERNEL);
-	unsigned long flags;
-	int retval;
-
-	if (!d || !d->irctl)
+	if (!d)
 		return;
 
-	ir = d->irctl;
-
-	dev_dbg(ir->d.dev, "lirc_dev: driver %s unregistered from minor = %d\n",
+	dev_dbg(&d->dev, "lirc_dev: driver %s unregistered from minor = %d\n",
 		d->name, d->minor);
 
-	cdev_device_del(&ir->cdev, &ir->dev);
+	mutex_lock(&d->mutex);
 
-	mutex_lock(&ir->mutex);
-
-	ir->attached = false;
-	if (ir->open) {
-		dev_dbg(ir->d.dev, LOGHEAD "releasing opened driver\n",
+	d->attached = false;
+	if (d->open) {
+		dev_dbg(&d->dev, LOGHEAD "releasing opened driver\n",
 			d->name, d->minor);
-		wake_up_interruptible(&ir->buf->wait_poll);
+		wake_up_interruptible(&d->buf->wait_poll);
 	}
 
-	mutex_unlock(&ir->mutex);
+	mutex_unlock(&d->mutex);
 
+	cdev_device_del(&d->cdev, &d->dev);
 	ida_simple_remove(&lirc_ida, d->minor);
-	put_device(&ir->dev);
+	put_device(&d->dev);
 }
 EXPORT_SYMBOL(lirc_unregister_device);
 
 int lirc_dev_fop_open(struct inode *inode, struct file *file)
 {
-	struct irctl *ir = container_of(inode->i_cdev, struct irctl, cdev);
+	struct lirc_dev *d = container_of(inode->i_cdev, struct lirc_dev, cdev);
 	int retval;
 
-	dev_dbg(ir->d.dev, LOGHEAD "open called\n", ir->d.name, ir->d.minor);
+	dev_dbg(&d->dev, LOGHEAD "open called\n", d->name, d->minor);
 
-	retval = mutex_lock_interruptible(&ir->mutex);
+	retval = mutex_lock_interruptible(&d->mutex);
 	if (retval)
 		return retval;
 
-	if (!ir->attached) {
+	if (!d->attached) {
 		retval = -ENODEV;
 		goto out;
 	}
 
-	if (ir->open) {
+	if (d->open) {
 		retval = -EBUSY;
 		goto out;
 	}
 
-	if (ir->d.rdev) {
-		retval = rc_open(ir->d.rdev);
+	if (d->rdev) {
+		retval = rc_open(d->rdev);
 		if (retval)
 			goto out;
 	}
 
-	if (ir->buf)
-		lirc_buffer_clear(ir->buf);
+	if (d->buf)
+		lirc_buffer_clear(d->buf);
 
-	ir->open++;
+	d->open++;
 
 	lirc_init_pdata(inode, file);
 	nonseekable_open(inode, file);
-	mutex_unlock(&ir->mutex);
+	mutex_unlock(&d->mutex);
 
 	return 0;
 
 out:
-	mutex_unlock(&ir->mutex);
+	mutex_unlock(&d->mutex);
 	return retval;
 }
 
 static int ir_lirc_close(struct inode *inode, struct file *file)
 {
-	struct irctl *ir = file->private_data;
+	struct lirc_dev *d = file->private_data;
 
-	mutex_lock(&ir->mutex);
+	mutex_lock(&d->mutex);
 
-	rc_close(ir->d.rdev);
-	ir->open--;
+	rc_close(d->rdev);
+	d->open--;
 
-	mutex_unlock(&ir->mutex);
+	mutex_unlock(&d->mutex);
 
 	return 0;
 }
@@ -335,64 +272,24 @@ static int ir_lirc_close(struct inode *inode, struct file *file)
 static ssize_t ir_lirc_transmit_ir(struct file *file, const char __user *buf,
 				   size_t n, loff_t *ppos)
 {
-	struct irctl *ir = file->private_data;
+	struct lirc_dev *d = file->private_data;
 	unsigned int ret;
 
-	if (!ir->attached)
+	if (!d->attached)
 		return POLLHUP | POLLERR;
 
-	if (fh->send_mode == LIRC_MODE_SCANCODE) {
-		struct lirc_scancode scan;
+	if (d->buf) {
+		poll_wait(file, &d->buf->wait_poll, wait);
 
-		if (n != sizeof(scan)) {
-			ret = -EINVAL;
-			goto out_unlock;
-		}
-
-		if (copy_from_user(&scan, buf, sizeof(scan))) {
-			ret = -EFAULT;
-			goto out_unlock;
-		}
-
-		if (scan.flags || scan.keycode || scan.timestamp) {
-			ret = -EINVAL;
-			goto out_unlock;
-		}
-
-		/*
-		 * The scancode field in lirc_scancode is 64-bit simply
-		 * to future-proof it, since there are IR protocols encode
-		 * use more than 32 bits. For now only 32-bit protocols
-		 * are supported.
-		 */
-		if (scan.scancode > U32_MAX ||
-		    !rc_validate_scancode(scan.rc_proto, scan.scancode)) {
-			ret = -EINVAL;
-			goto out_unlock;
-		}
-
-		raw = kmalloc_array(LIRCBUF_SIZE, sizeof(*raw), GFP_KERNEL);
-		if (!raw) {
-			ret = -ENOMEM;
-			goto out_unlock;
-		}
-
-		ret = ir_raw_encode_scancode(scan.rc_proto, scan.scancode,
-					     raw, LIRCBUF_SIZE);
-		if (ret < 0)
-			goto out_kfree_raw;
-
-		/* drop trailing space */
-		if (!(ret % 2))
-			count = ret - 1;
+		if (lirc_buffer_empty(d->buf))
+			ret = 0;
 		else
-			count = ret;
+			ret = POLLIN | POLLRDNORM;
+	} else {
+		ret = POLLERR;
+	}
 
-		txbuf = kmalloc_array(count, sizeof(unsigned int), GFP_KERNEL);
-		if (!txbuf) {
-			ret = -ENOMEM;
-			goto out_kfree_raw;
-		}
+	dev_dbg(&d->dev, LOGHEAD "poll result = %d\n", d->name, d->minor, ret);
 
 		for (i = 0; i < count; i++)
 			/* Convert from NS to US */
@@ -467,92 +364,55 @@ out_unlock:
 static long ir_lirc_ioctl(struct file *file, unsigned int cmd,
 			  unsigned long arg)
 {
-	struct irctl *ir = file->private_data;
+	struct lirc_dev *d = file->private_data;
 	__u32 mode;
 	int result;
 
-	ret = mutex_lock_interruptible(&dev->lock);
-	if (ret)
-		return ret;
+	dev_dbg(&d->dev, LOGHEAD "ioctl called (0x%x)\n",
+		d->name, d->minor, cmd);
 
-	result = mutex_lock_interruptible(&ir->mutex);
+	result = mutex_lock_interruptible(&d->mutex);
 	if (result)
 		return result;
 
-	if (!ir->attached) {
+	if (!d->attached) {
 		result = -ENODEV;
 		goto out;
 	}
 
 	switch (cmd) {
 	case LIRC_GET_FEATURES:
-		if (dev->driver_type == RC_DRIVER_SCANCODE)
-			val |= LIRC_CAN_REC_SCANCODE;
-
-		if (dev->driver_type == RC_DRIVER_IR_RAW) {
-			val |= LIRC_CAN_REC_MODE2;
-			if (dev->rx_resolution)
-				val |= LIRC_CAN_GET_REC_RESOLUTION;
-		}
-
-		if (dev->tx_ir) {
-			val |= LIRC_CAN_SEND_PULSE;
-			if (dev->s_tx_mask)
-				val |= LIRC_CAN_SET_TRANSMITTER_MASK;
-			if (dev->s_tx_carrier)
-				val |= LIRC_CAN_SET_SEND_CARRIER;
-			if (dev->s_tx_duty_cycle)
-				val |= LIRC_CAN_SET_SEND_DUTY_CYCLE;
-		}
-
-		if (dev->s_rx_carrier_range)
-			val |= LIRC_CAN_SET_REC_CARRIER |
-				LIRC_CAN_SET_REC_CARRIER_RANGE;
-
-		if (dev->s_learning_mode)
-			val |= LIRC_CAN_USE_WIDEBAND_RECEIVER;
-
-		if (dev->s_carrier_report)
-			val |= LIRC_CAN_MEASURE_CARRIER;
-
-		if (dev->max_timeout)
-			val |= LIRC_CAN_SET_REC_TIMEOUT;
-
+		result = put_user(d->features, (__u32 __user *)arg);
 		break;
 
 	/* mode support */
 	case LIRC_GET_REC_MODE:
-		if (dev->driver_type == RC_DRIVER_IR_RAW_TX)
-			ret = -ENOTTY;
-		else
-			val = fh->rec_mode;
-		break;
-
-	case LIRC_SET_REC_MODE:
-		switch (dev->driver_type) {
-		case RC_DRIVER_IR_RAW_TX:
-			ret = -ENOTTY;
-			break;
-		case RC_DRIVER_SCANCODE:
-			if (val != LIRC_MODE_SCANCODE)
-				ret = -EINVAL;
-			break;
-		case RC_DRIVER_IR_RAW:
-			if (!(val == LIRC_MODE_MODE2 ||
-			      val == LIRC_MODE_SCANCODE))
-				ret = -EINVAL;
+		if (!LIRC_CAN_REC(d->features)) {
+			result = -ENOTTY;
 			break;
 		}
 
-		if (!ret)
-			fh->rec_mode = val;
+		result = put_user(LIRC_REC2MODE
+				  (d->features & LIRC_CAN_REC_MASK),
+				  (__u32 __user *)arg);
 		break;
 
-	case LIRC_GET_SEND_MODE:
-		if (!dev->tx_ir)
-			ret = -ENOTTY;
-		else
-			val = fh->send_mode;
+	case LIRC_SET_REC_MODE:
+		if (!LIRC_CAN_REC(d->features)) {
+			result = -ENOTTY;
+			break;
+		}
+
+		result = get_user(mode, (__u32 __user *)arg);
+		if (!result && !(LIRC_MODE2REC(mode) & d->features))
+			result = -EINVAL;
+		/*
+		 * FIXME: We should actually set the mode somehow but
+		 * for now, lirc_serial doesn't support mode changing either
+		 */
+		break;
+	case LIRC_GET_LENGTH:
+		result = put_user(d->code_length, (__u32 __user *)arg);
 		break;
 
 	case LIRC_SET_SEND_MODE:
@@ -631,17 +491,23 @@ static long ir_lirc_ioctl(struct file *file, unsigned int cmd,
 
 	/* Generic timeout support */
 	case LIRC_GET_MIN_TIMEOUT:
-		if (!dev->max_timeout)
-			ret = -ENOTTY;
-		else
-			val = DIV_ROUND_UP(dev->min_timeout, 1000);
+		if (!(d->features & LIRC_CAN_SET_REC_TIMEOUT) ||
+		    d->min_timeout == 0) {
+			result = -ENOTTY;
+			break;
+		}
+
+		result = put_user(d->min_timeout, (__u32 __user *)arg);
 		break;
 
 	case LIRC_GET_MAX_TIMEOUT:
-		if (!dev->max_timeout)
-			ret = -ENOTTY;
-		else
-			val = dev->max_timeout / 1000;
+		if (!(d->features & LIRC_CAN_SET_REC_TIMEOUT) ||
+		    d->max_timeout == 0) {
+			result = -ENOTTY;
+			break;
+		}
+
+		result = put_user(d->max_timeout, (__u32 __user *)arg);
 		break;
 
 	case LIRC_SET_REC_TIMEOUT:
@@ -681,41 +547,41 @@ static long ir_lirc_ioctl(struct file *file, unsigned int cmd,
 	}
 
 out:
-	mutex_unlock(&ir->mutex);
+	mutex_unlock(&d->mutex);
 	return result;
 }
 
 static unsigned int ir_lirc_poll(struct file *file,
 				 struct poll_table_struct *wait)
 {
-	struct irctl *ir = file->private_data;
+	struct lirc_dev *d = file->private_data;
 	unsigned char *buf;
 	int ret, written = 0;
 	DECLARE_WAITQUEUE(wait, current);
 
-	dev_dbg(ir->d.dev, LOGHEAD "read called\n", ir->d.name, ir->d.minor);
-
-	buf = kzalloc(ir->buf->chunk_size, GFP_KERNEL);
+	buf = kzalloc(d->buf->chunk_size, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
-	ret = mutex_lock_interruptible(&ir->mutex);
+	dev_dbg(&d->dev, LOGHEAD "read called\n", d->name, d->minor);
+
+	ret = mutex_lock_interruptible(&d->mutex);
 	if (ret) {
 		kfree(buf);
 		return ret;
 	}
 
-	if (!ir->attached) {
+	if (!d->attached) {
 		ret = -ENODEV;
 		goto out_locked;
 	}
 
-	if (!LIRC_CAN_REC(ir->d.features)) {
+	if (!LIRC_CAN_REC(d->features)) {
 		ret = -EINVAL;
 		goto out_locked;
 	}
 
-	if (length % ir->buf->chunk_size) {
+	if (length % d->buf->chunk_size) {
 		ret = -EINVAL;
 		goto out_locked;
 	}
@@ -725,14 +591,14 @@ static unsigned int ir_lirc_poll(struct file *file,
 	 * to avoid losing scan code (in case when queue is awaken somewhere
 	 * between while condition checking and scheduling)
 	 */
-	add_wait_queue(&ir->buf->wait_poll, &wait);
+	add_wait_queue(&d->buf->wait_poll, &wait);
 
 	/*
 	 * while we didn't provide 'length' bytes, device is opened in blocking
 	 * mode and 'copy_to_user' is happy, wait for data.
 	 */
 	while (written < length && ret == 0) {
-		if (lirc_buffer_empty(ir->buf)) {
+		if (lirc_buffer_empty(d->buf)) {
 			/* According to the read(2) man page, 'written' can be
 			 * returned as less than 'length', instead of blocking
 			 * again, returning -EWOULDBLOCK, or returning
@@ -749,27 +615,27 @@ static unsigned int ir_lirc_poll(struct file *file,
 				break;
 			}
 
-			mutex_unlock(&ir->mutex);
+			mutex_unlock(&d->mutex);
 			set_current_state(TASK_INTERRUPTIBLE);
 			schedule();
 			set_current_state(TASK_RUNNING);
 
-			ret = mutex_lock_interruptible(&ir->mutex);
+			ret = mutex_lock_interruptible(&d->mutex);
 			if (ret) {
-				remove_wait_queue(&ir->buf->wait_poll, &wait);
+				remove_wait_queue(&d->buf->wait_poll, &wait);
 				goto out_unlocked;
 			}
 
-			if (!ir->attached) {
+			if (!d->attached) {
 				ret = -ENODEV;
 				goto out_locked;
 			}
 		} else {
-			lirc_buffer_read(ir->buf, buf);
+			lirc_buffer_read(d->buf, buf);
 			ret = copy_to_user((void __user *)buffer+written, buf,
-					   ir->buf->chunk_size);
+					   d->buf->chunk_size);
 			if (!ret)
-				written += ir->buf->chunk_size;
+				written += d->buf->chunk_size;
 			else
 				ret = -EFAULT;
 		}
@@ -906,13 +772,10 @@ int ir_lirc_register(struct rc_dev *dev)
 		break;
 	}
 
-	if (dev->tx_ir)
-		tx_type = "raw IR";
-	else
-		tx_type = "no";
+	remove_wait_queue(&d->buf->wait_poll, &wait);
 
 out_locked:
-	mutex_unlock(&ir->mutex);
+	mutex_unlock(&d->mutex);
 
 	return 0;
 
@@ -923,17 +786,17 @@ out_ida:
 
 void lirc_init_pdata(struct inode *inode, struct file *file)
 {
-	struct irctl *ir = container_of(inode->i_cdev, struct irctl, cdev);
+	struct lirc_dev *d = container_of(inode->i_cdev, struct lirc_dev, cdev);
 
-	file->private_data = ir;
+	file->private_data = d;
 }
 EXPORT_SYMBOL(lirc_init_pdata);
 
 void *lirc_get_pdata(struct file *file)
 {
-	struct irctl *ir = file->private_data;
+	struct lirc_dev *d = file->private_data;
 
-	return ir->d.data;
+	return d->data;
 }
 
 int __init lirc_dev_init(void)
