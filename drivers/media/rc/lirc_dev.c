@@ -213,17 +213,11 @@ void ir_lirc_scancode_event(struct rc_dev *dev, struct lirc_scancode *lsc)
 
 	cdev_init(&ir->cdev, d->fops);
 	ir->cdev.owner = ir->d.owner;
-	ir->cdev.kobj.parent = &ir->dev.kobj;
-
-	err = cdev_add(&ir->cdev, ir->dev.devt, 1);
-	if (err)
-		goto out_free_dev;
-
 	ir->attached = 1;
 
-	err = device_add(&ir->dev);
+	err = cdev_device_add(&ir->cdev, &ir->dev);
 	if (err)
-		goto out_cdev;
+		goto out_dev;
 
 	mutex_unlock(&lirc_dev_lock);
 
@@ -234,9 +228,7 @@ void ir_lirc_scancode_event(struct rc_dev *dev, struct lirc_scancode *lsc)
 
 	return 0;
 
-out_cdev:
-	cdev_del(&ir->cdev);
-out_free_dev:
+out_dev:
 	put_device(&ir->dev);
 out_lock:
 	mutex_unlock(&lirc_dev_lock);
@@ -274,8 +266,7 @@ void lirc_unregister_driver(struct lirc_driver *d)
 	if (retval)
 		goto out_kfifo;
 
-	device_del(&ir->dev);
-	cdev_del(&ir->cdev);
+	cdev_device_del(&ir->cdev, &ir->dev);
 	put_device(&ir->dev);
 }
 EXPORT_SYMBOL(lirc_unregister_driver);
