@@ -33,8 +33,22 @@
 
 static dev_t lirc_base_dev;
 
-/* Used to keep track of allocated lirc devices */
-static DEFINE_IDA(lirc_ida);
+struct irctl {
+	struct lirc_driver d;
+	int attached;
+	int open;
+
+	struct mutex irctl_lock;
+	struct lirc_buffer *buf;
+	bool buf_internal;
+
+	struct device dev;
+	struct cdev cdev;
+};
+
+static DEFINE_MUTEX(lirc_dev_lock);
+
+static struct irctl *irctls[MAX_IRCTL_DEVICES];
 
 /* Only used for sysfs but defined to void otherwise */
 static struct class *lirc_class;
@@ -73,14 +87,14 @@ void ir_lirc_raw_event(struct rc_dev *dev, struct ir_raw_event ev)
 		if (dev->gap)
 			return;
 
-		dev->gap_start = ktime_get();
-		dev->gap = true;
-		dev->gap_duration = ev.duration;
+static int lirc_allocate_buffer(struct irctl *ir)
+{
+	int err = 0;
+	struct lirc_driver *d = &ir->d;
 
-		sample = LIRC_TIMEOUT(ev.duration / 1000);
-		dev_dbg(&dev->dev, "timeout report (duration: %d)\n", sample);
-
-	/* Normal sample */
+	if (d->rbuf) {
+		ir->buf = d->rbuf;
+		ir->buf_internal = false;
 	} else {
 		if (dev->gap) {
 			dev->gap_duration += ktime_to_ns(ktime_sub(ktime_get(),
@@ -99,10 +113,15 @@ void ir_lirc_raw_event(struct rc_dev *dev, struct ir_raw_event ev)
 			dev->gap = false;
 		}
 
-		sample = ev.pulse ? LIRC_PULSE(ev.duration / 1000) :
-					LIRC_SPACE(ev.duration / 1000);
-		dev_dbg(&dev->dev, "delivering %uus %s to lirc_dev\n",
-			TO_US(ev.duration), TO_STR(ev.pulse));
+		err = lirc_buffer_init(ir->buf, d->chunk_size, d->buffer_size);
+		if (err) {
+			kfree(ir->buf);
+			ir->buf = NULL;
+			goto out;
+		}
+
+		ir->buf_internal = true;
+		d->rbuf = ir->buf;
 	}
 
 	/*
@@ -148,6 +167,16 @@ void ir_lirc_scancode_event(struct rc_dev *dev, struct lirc_scancode *lsc)
 
 	if (!d->fops) {
 		pr_err("fops pointer not filled in!\n");
+		return -EINVAL;
+	}
+
+	if (!d->rbuf && d->chunk_size < 1) {
+		pr_err("chunk_size must be set!\n");
+		return -EINVAL;
+	}
+
+	if (!d->rbuf && d->buffer_size < 1) {
+		pr_err("buffer_size must be set!\n");
 		return -EINVAL;
 	}
 
@@ -681,11 +710,76 @@ static unsigned int ir_lirc_poll(struct file *file,
 			if (file->f_flags & O_NONBLOCK)
 				return -EAGAIN;
 
-			ret = wait_event_interruptible(fh->wait_poll,
-					!kfifo_is_empty(&fh->rawir) ||
-					!rcdev->registered);
-			if (ret)
-				return ret;
+	buf = kzalloc(ir->buf->chunk_size, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	if (mutex_lock_interruptible(&ir->irctl_lock)) {
+		ret = -ERESTARTSYS;
+		goto out_unlocked;
+	}
+	if (!ir->attached) {
+		ret = -ENODEV;
+		goto out_locked;
+	}
+
+	if (length % ir->buf->chunk_size) {
+		ret = -EINVAL;
+		goto out_locked;
+	}
+
+	/*
+	 * we add ourselves to the task queue before buffer check
+	 * to avoid losing scan code (in case when queue is awaken somewhere
+	 * between while condition checking and scheduling)
+	 */
+	add_wait_queue(&ir->buf->wait_poll, &wait);
+
+	/*
+	 * while we didn't provide 'length' bytes, device is opened in blocking
+	 * mode and 'copy_to_user' is happy, wait for data.
+	 */
+	while (written < length && ret == 0) {
+		if (lirc_buffer_empty(ir->buf)) {
+			/* According to the read(2) man page, 'written' can be
+			 * returned as less than 'length', instead of blocking
+			 * again, returning -EWOULDBLOCK, or returning
+			 * -ERESTARTSYS
+			 */
+			if (written)
+				break;
+			if (file->f_flags & O_NONBLOCK) {
+				ret = -EWOULDBLOCK;
+				break;
+			}
+			if (signal_pending(current)) {
+				ret = -ERESTARTSYS;
+				break;
+			}
+
+			mutex_unlock(&ir->irctl_lock);
+			set_current_state(TASK_INTERRUPTIBLE);
+			schedule();
+			set_current_state(TASK_RUNNING);
+
+			if (mutex_lock_interruptible(&ir->irctl_lock)) {
+				ret = -ERESTARTSYS;
+				remove_wait_queue(&ir->buf->wait_poll, &wait);
+				goto out_unlocked;
+			}
+
+			if (!ir->attached) {
+				ret = -ENODEV;
+				goto out_locked;
+			}
+		} else {
+			lirc_buffer_read(ir->buf, buf);
+			ret = copy_to_user((void __user *)buffer+written, buf,
+					   ir->buf->chunk_size);
+			if (!ret)
+				written += ir->buf->chunk_size;
+			else
+				ret = -EFAULT;
 		}
 
 		if (!rcdev->registered)
