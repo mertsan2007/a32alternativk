@@ -101,10 +101,10 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 	if (rc < 0)
 		return rc;
 
-	rc = rc_register_device(rcdev);
+	rc = devm_rc_register_device(dev, rcdev);
 	if (rc < 0) {
 		dev_err(dev, "failed to register rc device (%d)\n", rc);
-		goto err_register_rc_device;
+		return rc;
 	}
 
 	platform_set_drvdata(pdev, gpio_dev);
@@ -119,9 +119,6 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 	return 0;
 
 err_request_irq:
-	rc_unregister_device(rcdev);
-	rcdev = NULL;
-err_register_rc_device:
 	return rc;
 }
 
@@ -130,7 +127,6 @@ static int gpio_ir_recv_remove(struct platform_device *pdev)
 	struct gpio_rc_dev *gpio_dev = platform_get_drvdata(pdev);
 
 	free_irq(gpio_to_irq(gpio_dev->gpio_nr), gpio_dev);
-	rc_unregister_device(gpio_dev->rcdev);
 	return 0;
 }
 
