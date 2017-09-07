@@ -83,7 +83,7 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 	rcdev->input_id.product = 0x0001;
 	rcdev->input_id.version = 0x0100;
 	rcdev->dev.parent = dev;
-	rcdev->driver_name = GPIO_IR_DRIVER_NAME;
+	rcdev->driver_name = KBUILD_MODNAME;
 	rcdev->min_timeout = 1;
 	rcdev->timeout = IR_DEFAULT_TIMEOUT;
 	rcdev->max_timeout = 10 * IR_DEFAULT_TIMEOUT;
