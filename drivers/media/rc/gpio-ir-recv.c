@@ -47,7 +47,6 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 	struct gpio_rc_dev *gpio_dev;
-	enum of_gpio_flags flags;
 	struct rc_dev *rcdev;
 	int rc;
 
@@ -58,15 +57,17 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 	if (!gpio_dev)
 		return -ENOMEM;
 
-	rc = of_get_gpio_flags(np, 0, &flags);
-	if (rc < 0) {
+	gpio_dev->gpiod = devm_gpiod_get(dev, NULL, GPIOD_IN);
+	if (IS_ERR(gpio_dev->gpiod)) {
+		rc = PTR_ERR(gpio_dev->gpiod);
+		/* Just try again if this happens */
 		if (rc != -EPROBE_DEFER)
-			dev_err(dev, "Failed to get gpio flags (%d)\n", rc);
+			dev_err(dev, "error getting gpio (%d)\n", rc);
 		return rc;
 	}
-
-	gpio_dev->gpio_nr = rc;
-	gpio_dev->active_low = (flags & OF_GPIO_ACTIVE_LOW);
+	gpio_dev->irq = gpiod_to_irq(gpio_dev->gpiod);
+	if (gpio_dev->irq < 0)
+		return gpio_dev->irq;
 
 	rcdev = devm_rc_allocate_device(dev, RC_DRIVER_IR_RAW);
 	if (!rcdev)
@@ -91,11 +92,6 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 
 	gpio_dev->rcdev = rcdev;
 
-	rc = devm_gpio_request_one(dev, gpio_dev->gpio_nr, GPIOF_DIR_IN,
-				   "gpio-ir-recv");
-	if (rc < 0)
-		return rc;
-
 	rc = devm_rc_register_device(dev, rcdev);
 	if (rc < 0) {
 		dev_err(dev, "failed to register rc device (%d)\n", rc);
@@ -104,8 +100,7 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, gpio_dev);
 
-	return devm_request_irq(dev, gpio_to_irq(gpio_dev->gpio_nr),
-				gpio_ir_recv_irq,
+	return devm_request_irq(dev, gpio_dev->irq, gpio_ir_recv_irq,
 				IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING,
 				"gpio-ir-recv-irq", gpio_dev);
 }
