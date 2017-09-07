@@ -96,12 +96,10 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 	if (of_property_read_bool(np, "wakeup-source"))
 		device_init_wakeup(dev, true);
 
-	rc = gpio_request(pdata->gpio_nr, "gpio-ir-recv");
+	rc = devm_gpio_request_one(dev, pdata->gpio_nr, GPIOF_DIR_IN,
+				   "gpio-ir-recv");
 	if (rc < 0)
 		return rc;
-	rc  = gpio_direction_input(pdata->gpio_nr);
-	if (rc < 0)
-		goto err_gpio_direction_input;
 
 	rc = rc_register_device(rcdev);
 	if (rc < 0) {
@@ -124,8 +122,6 @@ err_request_irq:
 	rc_unregister_device(rcdev);
 	rcdev = NULL;
 err_register_rc_device:
-err_gpio_direction_input:
-	gpio_free(pdata->gpio_nr);
 	return rc;
 }
 
@@ -135,7 +131,6 @@ static int gpio_ir_recv_remove(struct platform_device *pdev)
 
 	free_irq(gpio_to_irq(gpio_dev->gpio_nr), gpio_dev);
 	rc_unregister_device(gpio_dev->rcdev);
-	gpio_free(gpio_dev->gpio_nr);
 	return 0;
 }
 
