@@ -45,13 +45,21 @@ static irqreturn_t gpio_ir_recv_irq(int irq, void *dev_id)
 static int gpio_ir_recv_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct device_node *np = dev->of_node;
 	struct gpio_rc_dev *gpio_dev;
 	struct rc_dev *rcdev;
+	const struct gpio_ir_recv_platform_data *pdata = dev->platform_data;
 	int rc;
 
-	if (!np)
-		return -ENODEV;
+	if (pdev->dev.of_node) {
+		struct gpio_ir_recv_platform_data *dtpdata =
+			devm_kzalloc(dev, sizeof(*dtpdata), GFP_KERNEL);
+		if (!dtpdata)
+			return -ENOMEM;
+		rc = gpio_ir_recv_get_devtree_pdata(dev, dtpdata);
+		if (rc)
+			return rc;
+		pdata = dtpdata;
+	}
 
 	gpio_dev = devm_kzalloc(dev, sizeof(*gpio_dev), GFP_KERNEL);
 	if (!gpio_dev)
@@ -81,7 +89,7 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 	rcdev->input_id.product = 0x0001;
 	rcdev->input_id.version = 0x0100;
 	rcdev->dev.parent = dev;
-	rcdev->driver_name = KBUILD_MODNAME;
+	rcdev->driver_name = GPIO_IR_DRIVER_NAME;
 	rcdev->min_timeout = 1;
 	rcdev->timeout = IR_DEFAULT_TIMEOUT;
 	rcdev->max_timeout = 10 * IR_DEFAULT_TIMEOUT;
@@ -97,7 +105,7 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 	rc = devm_rc_register_device(dev, rcdev);
 	if (rc < 0) {
 		dev_err(dev, "failed to register rc device (%d)\n", rc);
-		return rc;
+		goto err_register_rc_device;
 	}
 
 	platform_set_drvdata(pdev, gpio_dev);
