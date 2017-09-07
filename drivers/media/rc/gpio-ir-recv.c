@@ -61,23 +61,17 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 		pdata = dtpdata;
 	}
 
+	if (!pdata)
+		return -EINVAL;
+
+	if (pdata->gpio_nr < 0)
+		return -EINVAL;
+
 	gpio_dev = devm_kzalloc(dev, sizeof(*gpio_dev), GFP_KERNEL);
 	if (!gpio_dev)
 		return -ENOMEM;
 
-	gpio_dev->gpiod = devm_gpiod_get(dev, NULL, GPIOD_IN);
-	if (IS_ERR(gpio_dev->gpiod)) {
-		rc = PTR_ERR(gpio_dev->gpiod);
-		/* Just try again if this happens */
-		if (rc != -EPROBE_DEFER)
-			dev_err(dev, "error getting gpio (%d)\n", rc);
-		return rc;
-	}
-	gpio_dev->irq = gpiod_to_irq(gpio_dev->gpiod);
-	if (gpio_dev->irq < 0)
-		return gpio_dev->irq;
-
-	rcdev = devm_rc_allocate_device(dev, RC_DRIVER_IR_RAW);
+	rcdev = rc_allocate_device(RC_DRIVER_IR_RAW);
 	if (!rcdev)
 		return -ENOMEM;
 
@@ -110,9 +104,34 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, gpio_dev);
 
-	return devm_request_irq(dev, gpio_dev->irq, gpio_ir_recv_irq,
-				IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING,
-				"gpio-ir-recv-irq", gpio_dev);
+	rc = request_any_context_irq(gpio_to_irq(pdata->gpio_nr),
+				gpio_ir_recv_irq,
+			IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING,
+					"gpio-ir-recv-irq", gpio_dev);
+	if (rc < 0)
+		goto err_request_irq;
+
+	return 0;
+
+err_request_irq:
+	rc_unregister_device(rcdev);
+	rcdev = NULL;
+err_register_rc_device:
+err_gpio_direction_input:
+	gpio_free(pdata->gpio_nr);
+err_gpio_request:
+	rc_free_device(rcdev);
+	return rc;
+}
+
+static int gpio_ir_recv_remove(struct platform_device *pdev)
+{
+	struct gpio_rc_dev *gpio_dev = platform_get_drvdata(pdev);
+
+	free_irq(gpio_to_irq(gpio_dev->gpio_nr), gpio_dev);
+	rc_unregister_device(gpio_dev->rcdev);
+	gpio_free(gpio_dev->gpio_nr);
+	return 0;
 }
 
 #ifdef CONFIG_PM
