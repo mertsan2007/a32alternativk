@@ -45,31 +45,28 @@ static irqreturn_t gpio_ir_recv_irq(int irq, void *dev_id)
 static int gpio_ir_recv_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	struct device_node *np = dev->of_node;
 	struct gpio_rc_dev *gpio_dev;
+	enum of_gpio_flags flags;
 	struct rc_dev *rcdev;
-	const struct gpio_ir_recv_platform_data *pdata = dev->platform_data;
 	int rc;
 
-	if (pdev->dev.of_node) {
-		struct gpio_ir_recv_platform_data *dtpdata =
-			devm_kzalloc(dev, sizeof(*dtpdata), GFP_KERNEL);
-		if (!dtpdata)
-			return -ENOMEM;
-		rc = gpio_ir_recv_get_devtree_pdata(dev, dtpdata);
-		if (rc)
-			return rc;
-		pdata = dtpdata;
-	}
-
-	if (!pdata)
-		return -EINVAL;
-
-	if (pdata->gpio_nr < 0)
-		return -EINVAL;
+	if (!np)
+		return -ENODEV;
 
 	gpio_dev = devm_kzalloc(dev, sizeof(*gpio_dev), GFP_KERNEL);
 	if (!gpio_dev)
 		return -ENOMEM;
+
+	rc = of_get_gpio_flags(np, 0, &flags);
+	if (rc < 0) {
+		if (rc != -EPROBE_DEFER)
+			dev_err(dev, "Failed to get gpio flags (%d)\n", rc);
+		return rc;
+	}
+
+	gpio_dev->gpio_nr = rc;
+	gpio_dev->active_low = (flags & OF_GPIO_ACTIVE_LOW);
 
 	rcdev = devm_rc_allocate_device(dev, RC_DRIVER_IR_RAW);
 	if (!rcdev)
@@ -93,10 +90,8 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 		rcdev->map_name = RC_MAP_EMPTY;
 
 	gpio_dev->rcdev = rcdev;
-	if (of_property_read_bool(np, "wakeup-source"))
-		device_init_wakeup(dev, true);
 
-	rc = devm_gpio_request_one(dev, pdata->gpio_nr, GPIOF_DIR_IN,
+	rc = devm_gpio_request_one(dev, gpio_dev->gpio_nr, GPIOF_DIR_IN,
 				   "gpio-ir-recv");
 	if (rc < 0)
 		return rc;
@@ -109,7 +104,7 @@ static int gpio_ir_recv_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, gpio_dev);
 
-	return devm_request_irq(dev, gpio_to_irq(pdata->gpio_nr),
+	return devm_request_irq(dev, gpio_to_irq(gpio_dev->gpio_nr),
 				gpio_ir_recv_irq,
 				IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING,
 				"gpio-ir-recv-irq", gpio_dev);
