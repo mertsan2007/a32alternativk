@@ -122,6 +122,17 @@ struct ir_raw_event_ctrl {
 		unsigned count;
 		unsigned wanted_bits;
 	} mce_kbd;
+	struct lirc_codec {
+		struct rc_dev *dev;
+		struct lirc_dev *ldev;
+		int carrier_low;
+
+		ktime_t gap_start;
+		u64 gap_duration;
+		bool gap;
+		bool send_timeout_reports;
+
+	} lirc;
 	struct xmp_dec {
 		int state;
 		unsigned count;
