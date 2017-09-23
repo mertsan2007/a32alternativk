@@ -106,6 +106,7 @@ EXPORT_SYMBOL(lirc_free_device);
 
 int lirc_register_device(struct lirc_dev *d)
 {
+	struct rc_dev *rcdev = d->rdev;
 	int minor;
 	int err;
 
@@ -146,7 +147,7 @@ int lirc_register_device(struct lirc_dev *d)
 	/* some safety check 8-) */
 	d->name[sizeof(d->name) - 1] = '\0';
 
-	if (LIRC_CAN_REC(d->features)) {
+	if (rcdev->driver_type == RC_DRIVER_IR_RAW) {
 		err = lirc_allocate_buffer(d);
 		if (err)
 			return err;
@@ -355,68 +356,10 @@ out_unlock:
 	return ret;
 }
 
-static long ir_lirc_ioctl(struct file *file, unsigned int cmd,
-			  unsigned long arg)
-{
-	struct rc_dev *rcdev = file->private_data;
-	struct lirc_dev *d = rcdev->lirc_dev;
-	__u32 mode;
-	int result;
-
-	dev_dbg(&d->dev, LOGHEAD "ioctl called (0x%x)\n",
-		d->name, d->minor, cmd);
-
-	result = mutex_lock_interruptible(&d->mutex);
-	if (result)
-		return result;
-
-	if (!d->attached) {
-		result = -ENODEV;
-		goto out;
-	}
-
-	switch (cmd) {
-	case LIRC_GET_FEATURES:
-		result = put_user(d->features, (__u32 __user *)arg);
-		break;
-
-	/* mode support */
-	case LIRC_GET_REC_MODE:
-		if (!LIRC_CAN_REC(d->features)) {
-			result = -ENOTTY;
-			break;
-		}
-
-		result = put_user(LIRC_REC2MODE
-				  (d->features & LIRC_CAN_REC_MASK),
-				  (__u32 __user *)arg);
-		break;
-
-	case LIRC_SET_REC_MODE:
-		if (!LIRC_CAN_REC(d->features)) {
-			result = -ENOTTY;
-			break;
-		}
-
-		result = get_user(mode, (__u32 __user *)arg);
-		if (!result && !(LIRC_MODE2REC(mode) & d->features))
-			result = -EINVAL;
-		/*
-		 * FIXME: We should actually set the mode somehow but
-		 * for now, lirc_serial doesn't support mode changing either
-		 */
-		break;
-	default:
-		ret = -ENOTTY;
-	}
-
-out:
-	mutex_unlock(&d->mutex);
-	return result;
-}
-
-static unsigned int ir_lirc_poll(struct file *file,
-				 struct poll_table_struct *wait)
+ssize_t lirc_dev_fop_read(struct file *file,
+			  char __user *buffer,
+			  size_t length,
+			  loff_t *ppos)
 {
 	struct rc_dev *rcdev = file->private_data;
 	struct lirc_dev *d = rcdev->lirc_dev;
@@ -441,7 +384,7 @@ static unsigned int ir_lirc_poll(struct file *file,
 		goto out_locked;
 	}
 
-	if (!LIRC_CAN_REC(d->features)) {
+	if (rcdev->driver_type != RC_DRIVER_IR_RAW) {
 		ret = -EINVAL;
 		goto out_locked;
 	}
