@@ -146,6 +146,8 @@ struct lirc_fh {
  * @gap_duration: duration of initial gap
  * @gap: true if we're in a gap
  * @send_timeout_reports: report timeouts in lirc raw IR.
+ * @rawir: queue for incoming raw IR
+ * @wait_poll: poll struct for lirc device
  * @send_mode: lirc mode for sending, either LIRC_MODE_SCANCODE or
  *	LIRC_MODE_PULSE
  * @change_protocol: allow changing the protocol used on hardware decoders
@@ -215,6 +217,8 @@ struct rc_dev {
 	u64				gap_duration;
 	bool				gap;
 	bool				send_timeout_reports;
+	DECLARE_KFIFO_PTR(rawir, unsigned int);
+	wait_queue_head_t		wait_poll;
 	u8				send_mode;
 #endif
 	int				(*change_protocol)(struct rc_dev *dev, u64 *rc_proto);
