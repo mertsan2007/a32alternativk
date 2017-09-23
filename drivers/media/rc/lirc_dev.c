@@ -24,7 +24,8 @@
 #include <linux/idr.h>
 
 #include "rc-core-priv.h"
-#include <uapi/linux/lirc.h>
+#include <media/lirc.h>
+#include <media/lirc_dev.h>
 
 #define LOGHEAD		"lirc_dev (%s[%d]): "
 
@@ -235,7 +236,7 @@ int lirc_dev_fop_open(struct inode *inode, struct file *file)
 
 	d->open++;
 
-	lirc_init_pdata(inode, file);
+	file->private_data = d->rdev;
 	nonseekable_open(inode, file);
 	mutex_unlock(&d->mutex);
 
@@ -248,11 +249,12 @@ out:
 
 static int ir_lirc_close(struct inode *inode, struct file *file)
 {
-	struct lirc_dev *d = file->private_data;
+	struct rc_dev *rcdev = file->private_data;
+	struct lirc_dev *d = rcdev->lirc_dev;
 
 	mutex_lock(&d->mutex);
 
-	rc_close(d->rdev);
+	rc_close(rcdev);
 	d->open--;
 
 	mutex_unlock(&d->mutex);
@@ -263,7 +265,8 @@ static int ir_lirc_close(struct inode *inode, struct file *file)
 static ssize_t ir_lirc_transmit_ir(struct file *file, const char __user *buf,
 				   size_t n, loff_t *ppos)
 {
-	struct lirc_dev *d = file->private_data;
+	struct rc_dev *rcdev = file->private_data;
+	struct lirc_dev *d = rcdev->lirc_dev;
 	unsigned int ret;
 
 	if (!d->attached)
@@ -355,7 +358,8 @@ out_unlock:
 static long ir_lirc_ioctl(struct file *file, unsigned int cmd,
 			  unsigned long arg)
 {
-	struct lirc_dev *d = file->private_data;
+	struct rc_dev *rcdev = file->private_data;
+	struct lirc_dev *d = rcdev->lirc_dev;
 	__u32 mode;
 	int result;
 
@@ -414,7 +418,8 @@ out:
 static unsigned int ir_lirc_poll(struct file *file,
 				 struct poll_table_struct *wait)
 {
-	struct lirc_dev *d = file->private_data;
+	struct rc_dev *rcdev = file->private_data;
+	struct lirc_dev *d = rcdev->lirc_dev;
 	unsigned char *buf;
 	int ret, written = 0;
 	DECLARE_WAITQUEUE(wait, current);
@@ -644,21 +649,6 @@ out_ida:
 	return err;
 }
 
-void lirc_init_pdata(struct inode *inode, struct file *file)
-{
-	struct lirc_dev *d = container_of(inode->i_cdev, struct lirc_dev, cdev);
-
-	file->private_data = d;
-}
-EXPORT_SYMBOL(lirc_init_pdata);
-
-void *lirc_get_pdata(struct file *file)
-{
-	struct lirc_dev *d = file->private_data;
-
-	return d->data;
-}
-
 int __init lirc_dev_init(void)
 {
 	int retval;
@@ -687,30 +677,4 @@ void __exit lirc_dev_exit(void)
 {
 	class_destroy(lirc_class);
 	unregister_chrdev_region(lirc_base_dev, LIRC_MAX_DEVICES);
-	pr_info("module unloaded\n");
 }
-
-struct rc_dev *rc_dev_get_from_fd(int fd)
-{
-	struct fd f = fdget(fd);
-	struct lirc_fh *fh;
-	struct rc_dev *dev;
-
-	if (!f.file)
-		return ERR_PTR(-EBADF);
-
-	if (f.file->f_op != &lirc_fops) {
-		fdput(f);
-		return ERR_PTR(-EINVAL);
-	}
-
-	fh = f.file->private_data;
-	dev = fh->rc;
-
-	get_device(&dev->dev);
-	fdput(f);
-
-	return dev;
-}
-
-MODULE_ALIAS("lirc_dev");

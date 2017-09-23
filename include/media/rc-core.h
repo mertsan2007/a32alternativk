@@ -21,6 +21,7 @@
 #include <linux/kfifo.h>
 #include <linux/time.h>
 #include <linux/timer.h>
+#include <media/lirc_dev.h>
 #include <media/rc-map.h>
 
 /**
@@ -138,15 +139,15 @@ struct lirc_fh {
  * @max_timeout: maximum timeout supported by device
  * @rx_resolution : resolution (in ns) of input sampler
  * @tx_resolution: resolution (in ns) of output sampler
- * @lirc_dev: lirc device
- * @lirc_cdev: lirc char cdev
+ * @lirc_dev: lirc char device
+ * @carrier_low: when setting the carrier range, first the low end must be
+ *	set with an ioctl and then the high end with another ioctl
  * @gap_start: time when gap starts
  * @gap_duration: duration of initial gap
  * @gap: true if we're in a gap
- * @lirc_fh_lock: protects lirc_fh list
- * @lirc_fh: list of open files
- * @registered: set to true by rc_register_device(), false by
- *	rc_unregister_device
+ * @send_timeout_reports: report timeouts in lirc raw IR.
+ * @send_mode: lirc mode for sending, either LIRC_MODE_SCANCODE or
+ *	LIRC_MODE_PULSE
  * @change_protocol: allow changing the protocol used on hardware decoders
  * @open: callback to allow drivers to enable polling/irq when IR input device
  *	is opened.
@@ -208,15 +209,14 @@ struct rc_dev {
 	u32				rx_resolution;
 	u32				tx_resolution;
 #ifdef CONFIG_LIRC
-	struct device			lirc_dev;
-	struct cdev			lirc_cdev;
+	struct lirc_dev			*lirc_dev;
+	int				carrier_low;
 	ktime_t				gap_start;
 	u64				gap_duration;
 	bool				gap;
-	spinlock_t			lirc_fh_lock;
-	struct list_head		lirc_fh;
+	bool				send_timeout_reports;
+	u8				send_mode;
 #endif
-	bool				registered;
 	int				(*change_protocol)(struct rc_dev *dev, u64 *rc_proto);
 	int				(*open)(struct rc_dev *dev);
 	void				(*close)(struct rc_dev *dev);

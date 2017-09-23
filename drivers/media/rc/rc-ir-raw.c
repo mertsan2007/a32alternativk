@@ -41,8 +41,8 @@ static int ir_raw_event_thread(void *data)
 			list_for_each_entry(handler, &ir_raw_handler_list, list)
 				if (dev->enabled_protocols &
 				    handler->protocols || !handler->protocols)
-					handler->decode(dev, ev);
-			ir_lirc_raw_event(dev, ev);
+					handler->decode(raw->dev, ev);
+			ir_lirc_raw_event(raw->dev, ev);
 			raw->prev_ev = ev;
 		}
 		mutex_unlock(&ir_raw_handler_lock);

@@ -119,17 +119,6 @@ struct ir_raw_event_ctrl {
 		unsigned count;
 		unsigned wanted_bits;
 	} mce_kbd;
-	struct lirc_codec {
-		struct rc_dev *dev;
-		struct lirc_dev *ldev;
-		int carrier_low;
-
-		ktime_t gap_start;
-		u64 gap_duration;
-		bool gap;
-		bool send_timeout_reports;
-		u8 send_mode;
-	} lirc;
 	struct xmp_dec {
 		int state;
 		unsigned count;
@@ -303,6 +292,27 @@ void ir_raw_init(void);
 
 /*
  * lirc interface
+ */
+#ifdef CONFIG_LIRC
+int lirc_dev_init(void);
+void lirc_dev_exit(void);
+void ir_lirc_raw_event(struct rc_dev *dev, struct ir_raw_event ev);
+int ir_lirc_register(struct rc_dev *dev);
+void ir_lirc_unregister(struct rc_dev *dev);
+#else
+static inline int lirc_dev_init(void) { return 0; }
+static inline void lirc_dev_exit(void) {}
+static inline void ir_lirc_raw_event(struct rc_dev *dev,
+				     struct ir_raw_event ev) { }
+static inline int ir_lirc_register(struct rc_dev *dev) { return 0; }
+static inline void ir_lirc_unregister(struct rc_dev *dev) { }
+#endif
+
+/*
+ * Decoder initialization code
+ *
+ * Those load logic are called during ir-core init, and automatically
+ * loads the compiled decoders for their usage with IR raw events
  */
 #ifdef CONFIG_LIRC
 int lirc_dev_init(void);

@@ -1898,23 +1898,28 @@ int rc_register_device(struct rc_dev *dev)
 			goto out_dev;
 	}
 
-	if (dev->driver_type != RC_DRIVER_IR_RAW_TX) {
-		rc = rc_setup_rx_device(dev);
-		if (rc)
-			goto out_lirc;
+	/* Ensure that the lirc kfifo is setup before we start the thread */
+	if (dev->driver_type != RC_DRIVER_SCANCODE) {
+		rc = ir_lirc_register(dev);
+		if (rc < 0)
+			goto out_rx;
 	}
 
 	if (dev->driver_type == RC_DRIVER_IR_RAW) {
 		rc = ir_raw_event_register(dev);
 		if (rc < 0)
-			goto out_rx;
+			goto out_lirc;
 	}
 
-	dev_dbg(&dev->dev, "Registered rc%u (driver: %s)\n", dev->minor,
-		dev->driver_name ? dev->driver_name : "unknown");
+	IR_dprintk(1, "Registered rc%u (driver: %s)\n",
+		   dev->minor,
+		   dev->driver_name ? dev->driver_name : "unknown");
 
 	return 0;
 
+out_lirc:
+	if (dev->driver_type != RC_DRIVER_SCANCODE)
+		ir_lirc_unregister(dev);
 out_rx:
 	rc_free_rx_device(dev);
 out_lirc:
@@ -1978,11 +1983,7 @@ void rc_unregister_device(struct rc_dev *dev)
 
 	rc_free_rx_device(dev);
 
-	/*
-	 * lirc device should be freed with dev->registered = false, so
-	 * that userspace polling will get notified.
-	 */
-	if (dev->allowed_protocols != RC_PROTO_BIT_CEC)
+	if (dev->driver_type != RC_DRIVER_SCANCODE)
 		ir_lirc_unregister(dev);
 
 	device_del(&dev->dev);
