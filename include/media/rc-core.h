@@ -21,7 +21,6 @@
 #include <linux/kfifo.h>
 #include <linux/time.h>
 #include <linux/timer.h>
-#include <media/lirc_dev.h>
 #include <media/rc-map.h>
 
 /**
@@ -139,7 +138,8 @@ struct lirc_fh {
  * @max_timeout: maximum timeout supported by device
  * @rx_resolution : resolution (in ns) of input sampler
  * @tx_resolution: resolution (in ns) of output sampler
- * @lirc_dev: lirc char device
+ * @lirc_dev: lirc device
+ * @lirc_cdev: lirc char cdev
  * @lirc_open: count of the number of times the device has been opened
  * @carrier_low: when setting the carrier range, first the low end must be
  *	set with an ioctl and then the high end with another ioctl
@@ -214,7 +214,8 @@ struct rc_dev {
 	u32				rx_resolution;
 	u32				tx_resolution;
 #ifdef CONFIG_LIRC
-	struct lirc_dev			*lirc_dev;
+	struct device			lirc_dev;
+	struct cdev			lirc_cdev;
 	int				lirc_open;
 	int				carrier_low;
 	ktime_t				gap_start;
