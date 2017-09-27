@@ -80,6 +80,7 @@ struct bpf_map {
 	atomic_t refcnt ____cacheline_aligned;
 	atomic_t usercnt;
 	struct work_struct work;
+	u8 name[BPF_OBJ_NAME_LEN];
 };
 
 /* function argument constraints */
