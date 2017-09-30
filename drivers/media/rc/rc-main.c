@@ -698,8 +698,7 @@ static unsigned int repeat_period(int protocol)
 void rc_repeat(struct rc_dev *dev)
 {
 	unsigned long flags;
-	unsigned int timeout = nsecs_to_jiffies(dev->timeout) +
-		msecs_to_jiffies(repeat_period(dev->last_protocol));
+	unsigned int timeout = protocols[dev->last_protocol].repeat_period;
 	struct lirc_scancode sc = {
 		.scancode = dev->last_scancode, .rc_proto = dev->last_protocol,
 		.keycode = dev->keypressed ? dev->last_keycode : KEY_RESERVED,
@@ -707,8 +706,7 @@ void rc_repeat(struct rc_dev *dev)
 			 (dev->last_toggle ? LIRC_SCANCODE_FLAG_TOGGLE : 0)
 	};
 
-	if (dev->allowed_protocols != RC_PROTO_BIT_CEC)
-		ir_lirc_scancode_event(dev, &sc);
+	ir_lirc_scancode_event(dev, &sc);
 
 	spin_lock_irqsave(&dev->keylock, flags);
 
@@ -716,7 +714,7 @@ void rc_repeat(struct rc_dev *dev)
 	input_sync(dev->input_dev);
 
 	if (dev->keypressed) {
-		dev->keyup_jiffies = jiffies + timeout;
+		dev->keyup_jiffies = jiffies + msecs_to_jiffies(timeout);
 		mod_timer(&dev->timer_keyup, dev->keyup_jiffies);
 	}
 
