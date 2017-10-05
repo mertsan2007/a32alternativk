@@ -353,7 +353,15 @@ get_map_perf_counter(struct bpf_map *map, u64 flags,
 	if (!ee)
 		return -ENOENT;
 
-	err = perf_event_read_local(ee->event, &value, NULL, NULL);
+	return perf_event_read_local(ee->event, value, enabled, running);
+}
+
+BPF_CALL_2(bpf_perf_event_read, struct bpf_map *, map, u64, flags)
+{
+	u64 value = 0;
+	int err;
+
+	err = get_map_perf_counter(map, flags, &value, NULL, NULL);
 	/*
 	 * this api is ugly since we miss [-22..-2] range of valid
 	 * counter values, but that's uapi
@@ -615,14 +623,8 @@ static const struct bpf_func_proto *kprobe_prog_func_proto(enum bpf_func_id func
 		return &bpf_perf_event_output_proto;
 	case BPF_FUNC_get_stackid:
 		return &bpf_get_stackid_proto;
-	case BPF_FUNC_get_stack:
-		return &bpf_get_stack_proto;
 	case BPF_FUNC_perf_event_read_value:
 		return &bpf_perf_event_read_value_proto;
-#ifdef CONFIG_BPF_KPROBE_OVERRIDE
-	case BPF_FUNC_override_return:
-		return &bpf_override_return_proto;
-#endif
 	default:
 		return tracing_func_proto(func_id);
 	}
