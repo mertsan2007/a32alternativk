@@ -357,6 +357,20 @@ struct rt6_info *ip6_dst_alloc(struct net *net, struct net_device *dev,
 
 	return rt;
 }
+
+struct rt6_info *ip6_dst_alloc(struct net *net,
+			       struct net_device *dev,
+			       int flags)
+{
+	struct rt6_info *rt = __ip6_dst_alloc(net, dev, flags);
+
+	if (rt) {
+		rt6_info_init(rt);
+		atomic_inc(&net->ipv6.rt6_stats->fib_rt_alloc);
+	}
+
+	return rt;
+}
 EXPORT_SYMBOL(ip6_dst_alloc);
 
 static void ip6_dst_destroy(struct dst_entry *dst)
@@ -1277,6 +1291,8 @@ static DEFINE_SPINLOCK(rt6_exception_lock);
 static void rt6_remove_exception(struct rt6_exception_bucket *bucket,
 				 struct rt6_exception *rt6_ex)
 {
+	struct net *net = dev_net(rt6_ex->rt6i->dst.dev);
+
 	if (!bucket || !rt6_ex)
 		return;
 	rt6_ex->rt6i->rt6i_node = NULL;
@@ -1285,6 +1301,7 @@ static void rt6_remove_exception(struct rt6_exception_bucket *bucket,
 	kfree_rcu(rt6_ex, rcu);
 	WARN_ON_ONCE(!bucket->depth);
 	bucket->depth--;
+	net->ipv6.rt6_stats->fib_rt_cache--;
 }
 
 /* Remove oldest rt6_ex in bucket and free the memory
@@ -1391,6 +1408,7 @@ __rt6_find_exception_rcu(struct rt6_exception_bucket **bucket,
 static int rt6_insert_exception(struct rt6_info *nrt,
 				struct rt6_info *ort)
 {
+	struct net *net = dev_net(ort->dst.dev);
 	struct rt6_exception_bucket *bucket;
 	struct in6_addr *src_key = NULL;
 	struct rt6_exception *rt6_ex;
@@ -1460,6 +1478,7 @@ static int rt6_insert_exception(struct rt6_info *nrt,
 	nrt->rt6i_node = ort->rt6i_node;
 	hlist_add_head_rcu(&rt6_ex->hlist, &bucket->chain);
 	bucket->depth++;
+	net->ipv6.rt6_stats->fib_rt_cache++;
 
 	if (bucket->depth > FIB6_MAX_DEPTH)
 		rt6_exception_remove_oldest(bucket);

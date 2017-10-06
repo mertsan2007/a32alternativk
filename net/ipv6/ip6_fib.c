@@ -149,70 +149,6 @@ static __be32 addr_bit_set(const void *token, int fn_bit)
 	       addr[fn_bit >> 5];
 }
 
-struct fib6_info *fib6_info_alloc(gfp_t gfp_flags)
-{
-	struct fib6_info *f6i;
-
-	f6i = kzalloc(sizeof(*f6i), gfp_flags);
-	if (!f6i)
-		return NULL;
-
-	f6i->rt6i_pcpu = alloc_percpu_gfp(struct rt6_info *, gfp_flags);
-	if (!f6i->rt6i_pcpu) {
-		kfree(f6i);
-		return NULL;
-	}
-
-	INIT_LIST_HEAD(&f6i->fib6_siblings);
-	f6i->fib6_metrics = (struct dst_metrics *)&dst_default_metrics;
-
-	atomic_inc(&f6i->fib6_ref);
-
-	return f6i;
-}
-
-void fib6_info_destroy_rcu(struct rcu_head *head)
-{
-	struct fib6_info *f6i = container_of(head, struct fib6_info, rcu);
-	struct rt6_exception_bucket *bucket;
-	struct dst_metrics *m;
-
-	WARN_ON(f6i->fib6_node);
-
-	bucket = rcu_dereference_protected(f6i->rt6i_exception_bucket, 1);
-	if (bucket) {
-		f6i->rt6i_exception_bucket = NULL;
-		kfree(bucket);
-	}
-
-	if (f6i->rt6i_pcpu) {
-		int cpu;
-
-		for_each_possible_cpu(cpu) {
-			struct rt6_info **ppcpu_rt;
-			struct rt6_info *pcpu_rt;
-
-			ppcpu_rt = per_cpu_ptr(f6i->rt6i_pcpu, cpu);
-			pcpu_rt = *ppcpu_rt;
-			if (pcpu_rt) {
-				dst_dev_put(&pcpu_rt->dst);
-				dst_release(&pcpu_rt->dst);
-				*ppcpu_rt = NULL;
-			}
-		}
-	}
-
-	if (f6i->fib6_nh.nh_dev)
-		dev_put(f6i->fib6_nh.nh_dev);
-
-	m = f6i->fib6_metrics;
-	if (m != &dst_default_metrics && refcount_dec_and_test(&m->refcnt))
-		kfree(m);
-
-	kfree(f6i);
-}
-EXPORT_SYMBOL_GPL(fib6_info_destroy_rcu);
-
 static struct fib6_node *node_alloc(struct net *net)
 {
 	struct fib6_node *fn;
@@ -680,7 +616,8 @@ void fib6_metric_set(struct fib6_info *f6i, int metric, u32 val)
  *	node.
  */
 
-static struct fib6_node *fib6_add_1(struct fib6_table *table,
+static struct fib6_node *fib6_add_1(struct net *net,
+				    struct fib6_table *table,
 				    struct fib6_node *root,
 				    struct in6_addr *addr, int plen,
 				    int offset, int allow_create,
@@ -1238,7 +1175,7 @@ int fib6_add(struct fib6_node *root, struct fib6_info *rt,
 	if (!allow_create && !replace_required)
 		pr_warn("RTM_NEWROUTE with no NLM_F_CREATE or NLM_F_REPLACE\n");
 
-	fn = fib6_add_1(table, root,
+	fn = fib6_add_1(info->nl_net, table, root,
 			&rt->rt6i_dst.addr, rt->rt6i_dst.plen,
 			offsetof(struct rt6_info, rt6i_dst), allow_create,
 			replace_required, extack);
@@ -1279,8 +1216,8 @@ int fib6_add(struct fib6_node *root, struct fib6_info *rt,
 
 			/* Now add the first leaf node to new subtree */
 
-			sn = fib6_add_1(table, sfn, &rt->rt6i_src.addr,
-					rt->rt6i_src.plen,
+			sn = fib6_add_1(info->nl_net, table, sfn,
+					&rt->rt6i_src.addr, rt->rt6i_src.plen,
 					offsetof(struct rt6_info, rt6i_src),
 					allow_create, replace_required, extack);
 
@@ -1298,8 +1235,8 @@ int fib6_add(struct fib6_node *root, struct fib6_info *rt,
 			rcu_assign_pointer(sfn->parent, fn);
 			rcu_assign_pointer(fn->subtree, sfn);
 		} else {
-			sn = fib6_add_1(table, FIB6_SUBTREE(fn), &rt->rt6i_src.addr,
-					rt->rt6i_src.plen,
+			sn = fib6_add_1(info->nl_net, table, FIB6_SUBTREE(fn),
+					&rt->rt6i_src.addr, rt->rt6i_src.plen,
 					offsetof(struct rt6_info, rt6i_src),
 					allow_create, replace_required, extack);
 
