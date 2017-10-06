@@ -451,14 +451,7 @@ void __net_exit fib6_notifier_exit(struct net *net);
 unsigned int fib6_tables_seq_read(struct net *net);
 int fib6_tables_dump(struct net *net, struct notifier_block *nb);
 
-void fib6_update_sernum(struct net *net, struct fib6_info *rt);
-void fib6_update_sernum_upto_root(struct net *net, struct fib6_info *rt);
-
-void fib6_metric_set(struct fib6_info *f6i, int metric, u32 val);
-static inline bool fib6_metric_locked(struct fib6_info *f6i, int metric)
-{
-	return !!(f6i->fib6_metrics->metrics[RTAX_LOCK - 1] & (1 << metric));
-}
+void fib6_update_sernum(struct rt6_info *rt);
 
 #ifdef CONFIG_IPV6_MULTIPLE_TABLES
 int fib6_rules_init(void);
