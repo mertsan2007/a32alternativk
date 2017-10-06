@@ -123,6 +123,20 @@ struct rt6_exception {
 #define FIB6_EXCEPTION_BUCKET_SIZE (1 << FIB6_EXCEPTION_BUCKET_SIZE_SHIFT)
 #define FIB6_MAX_DEPTH 5
 
+struct rt6_info {
+	struct dst_entry		dst;
+
+struct rt6_exception {
+	struct hlist_node	hlist;
+	struct rt6_info		*rt6i;
+	unsigned long		stamp;
+	struct rcu_head		rcu;
+};
+
+#define FIB6_EXCEPTION_BUCKET_SIZE_SHIFT 10
+#define FIB6_EXCEPTION_BUCKET_SIZE (1 << FIB6_EXCEPTION_BUCKET_SIZE_SHIFT)
+#define FIB6_MAX_DEPTH 5
+
 struct fib6_nh {
 	struct in6_addr		nh_gw;
 	struct net_device	*nh_dev;
@@ -192,8 +206,17 @@ struct rt6_info {
 	struct list_head		rt6i_uncached;
 	struct uncached_list		*rt6i_uncached_list;
 
+	struct inet6_dev		*rt6i_idev;
+	struct rt6_info * __percpu	*rt6i_pcpu;
+	struct rt6_exception_bucket __rcu *rt6i_exception_bucket;
+
+	u32				rt6i_metric;
+	u32				rt6i_pmtu;
 	/* more non-fragment space at head required */
 	unsigned short			rt6i_nfheader_len;
+	u8				rt6i_protocol;
+	u8				exception_bucket_flushed:1,
+					unused:7;
 };
 
 #define for_each_fib6_node_rt_rcu(fn)					\

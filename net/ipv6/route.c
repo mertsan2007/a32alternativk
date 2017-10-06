@@ -105,7 +105,7 @@ static int rt6_fill_node(struct net *net, struct sk_buff *skb,
 			 struct in6_addr *dest, struct in6_addr *src,
 			 int iif, int type, u32 portid, u32 seq,
 			 unsigned int flags);
-static struct rt6_info *rt6_find_cached_rt(struct fib6_info *rt,
+static struct rt6_info *rt6_find_cached_rt(struct rt6_info *rt,
 					   struct in6_addr *daddr,
 					   struct in6_addr *saddr);
 
@@ -362,7 +362,8 @@ EXPORT_SYMBOL(ip6_dst_alloc);
 static void ip6_dst_destroy(struct dst_entry *dst)
 {
 	struct rt6_info *rt = (struct rt6_info *)dst;
-	struct fib6_info *from;
+	struct rt6_exception_bucket *bucket;
+	struct dst_entry *from = dst->from;
 	struct inet6_dev *idev;
 
 	dst_destroy_metrics_generic(dst);
@@ -372,6 +373,11 @@ static void ip6_dst_destroy(struct dst_entry *dst)
 	if (idev) {
 		rt->rt6i_idev = NULL;
 		in6_dev_put(idev);
+	}
+	bucket = rcu_dereference_protected(rt->rt6i_exception_bucket, 1);
+	if (bucket) {
+		rt->rt6i_exception_bucket = NULL;
+		kfree(bucket);
 	}
 
 	rcu_read_lock();
@@ -1284,18 +1290,14 @@ static DEFINE_SPINLOCK(rt6_exception_lock);
 static void rt6_remove_exception(struct rt6_exception_bucket *bucket,
 				 struct rt6_exception *rt6_ex)
 {
-	struct net *net;
-
 	if (!bucket || !rt6_ex)
 		return;
-
-	net = dev_net(rt6_ex->rt6i->dst.dev);
+	rt6_ex->rt6i->rt6i_node = NULL;
 	hlist_del_rcu(&rt6_ex->hlist);
-	dst_release(&rt6_ex->rt6i->dst);
+	rt6_release(rt6_ex->rt6i);
 	kfree_rcu(rt6_ex, rcu);
 	WARN_ON_ONCE(!bucket->depth);
 	bucket->depth--;
-	net->ipv6.rt6_stats->fib_rt_cache--;
 }
 
 /* Remove oldest rt6_ex in bucket and free the memory
@@ -1399,35 +1401,18 @@ __rt6_find_exception_rcu(struct rt6_exception_bucket **bucket,
 	return NULL;
 }
 
-static unsigned int fib6_mtu(const struct fib6_info *rt)
-{
-	unsigned int mtu;
-
-	if (rt->fib6_pmtu) {
-		mtu = rt->fib6_pmtu;
-	} else {
-		struct net_device *dev = fib6_info_nh_dev(rt);
-		struct inet6_dev *idev;
-
-		rcu_read_lock();
-		idev = __in6_dev_get(dev);
-		mtu = idev->cnf.mtu6;
-		rcu_read_unlock();
-	}
-
-	mtu = min_t(unsigned int, mtu, IP6_MAX_MTU);
-
-	return mtu - lwtunnel_headroom(rt->fib6_nh.nh_lwtstate, mtu);
-}
-
 static int rt6_insert_exception(struct rt6_info *nrt,
-				struct fib6_info *ort)
+				struct rt6_info *ort)
 {
-	struct net *net = dev_net(nrt->dst.dev);
 	struct rt6_exception_bucket *bucket;
 	struct in6_addr *src_key = NULL;
 	struct rt6_exception *rt6_ex;
 	int err = 0;
+
+	/* ort can't be a cache or pcpu route */
+	if (ort->rt6i_flags & (RTF_CACHE | RTF_PCPU))
+		ort = (struct rt6_info *)ort->dst.from;
+	WARN_ON_ONCE(ort->rt6i_flags & (RTF_CACHE | RTF_PCPU));
 
 	spin_lock_bh(&rt6_exception_lock);
 
@@ -1455,23 +1440,9 @@ static int rt6_insert_exception(struct rt6_info *nrt,
 	 * Otherwise, the exception table is indexed by
 	 * a hash of only rt6i_dst.
 	 */
-	if (ort->fib6_src.plen)
+	if (ort->rt6i_src.plen)
 		src_key = &nrt->rt6i_src.addr;
 #endif
-
-	/* Update rt6i_prefsrc as it could be changed
-	 * in rt6_remove_prefsrc()
-	 */
-	nrt->rt6i_prefsrc = ort->fib6_prefsrc;
-	/* rt6_mtu_change() might lower mtu on ort.
-	 * Only insert this exception route if its mtu
-	 * is less than ort's mtu value.
-	 */
-	if (dst_metric_raw(&nrt->dst, RTAX_MTU) >= fib6_mtu(ort)) {
-		err = -EINVAL;
-		goto out;
-	}
-
 	rt6_ex = __rt6_find_exception_spinlock(&bucket, &nrt->rt6i_dst.addr,
 					       src_key);
 	if (rt6_ex)
@@ -1484,9 +1455,10 @@ static int rt6_insert_exception(struct rt6_info *nrt,
 	}
 	rt6_ex->rt6i = nrt;
 	rt6_ex->stamp = jiffies;
+	atomic_inc(&nrt->rt6i_ref);
+	nrt->rt6i_node = ort->rt6i_node;
 	hlist_add_head_rcu(&rt6_ex->hlist, &bucket->chain);
 	bucket->depth++;
-	net->ipv6.rt6_stats->fib_rt_cache++;
 
 	if (bucket->depth > FIB6_MAX_DEPTH)
 		rt6_exception_remove_oldest(bucket);
@@ -1495,17 +1467,13 @@ out:
 	spin_unlock_bh(&rt6_exception_lock);
 
 	/* Update fn->fn_sernum to invalidate all cached dst */
-	if (!err) {
-		spin_lock_bh(&ort->fib6_table->tb6_lock);
-		fib6_update_sernum(net, ort);
-		spin_unlock_bh(&ort->fib6_table->tb6_lock);
-		fib6_force_start_gc(net);
-	}
+	if (!err)
+		fib6_update_sernum(ort);
 
 	return err;
 }
 
-void rt6_flush_exceptions(struct fib6_info *rt)
+void rt6_flush_exceptions(struct rt6_info *rt)
 {
 	struct rt6_exception_bucket *bucket;
 	struct rt6_exception *rt6_ex;
@@ -1535,7 +1503,7 @@ out:
 /* Find cached rt in the hash table inside passed in rt
  * Caller has to hold rcu_read_lock()
  */
-static struct rt6_info *rt6_find_cached_rt(struct fib6_info *rt,
+static struct rt6_info *rt6_find_cached_rt(struct rt6_info *rt,
 					   struct in6_addr *daddr,
 					   struct in6_addr *saddr)
 {
@@ -1553,7 +1521,7 @@ static struct rt6_info *rt6_find_cached_rt(struct fib6_info *rt,
 	 * Otherwise, the exception table is indexed by
 	 * a hash of only rt6i_dst.
 	 */
-	if (rt->fib6_src.plen)
+	if (rt->rt6i_src.plen)
 		src_key = saddr;
 #endif
 	rt6_ex = __rt6_find_exception_rcu(&bucket, daddr, src_key);
@@ -1565,16 +1533,14 @@ static struct rt6_info *rt6_find_cached_rt(struct fib6_info *rt,
 }
 
 /* Remove the passed in cached rt from the hash table that contains it */
-static int rt6_remove_exception_rt(struct rt6_info *rt)
+int rt6_remove_exception_rt(struct rt6_info *rt)
 {
+	struct rt6_info *from = (struct rt6_info *)rt->dst.from;
 	struct rt6_exception_bucket *bucket;
 	struct in6_addr *src_key = NULL;
 	struct rt6_exception *rt6_ex;
-	struct fib6_info *from;
 	int err;
 
-	from = rcu_dereference_protected(rt->from,
-					 lockdep_is_held(&rt6_exception_lock));
 	if (!from ||
 	    !(rt->rt6i_flags | RTF_CACHE))
 		return -EINVAL;
@@ -1592,7 +1558,7 @@ static int rt6_remove_exception_rt(struct rt6_info *rt)
 	 * Otherwise, the exception table is indexed by
 	 * a hash of only rt6i_dst.
 	 */
-	if (from->fib6_src.plen)
+	if (from->rt6i_src.plen)
 		src_key = &rt->rt6i_src.addr;
 #endif
 	rt6_ex = __rt6_find_exception_spinlock(&bucket,
@@ -1614,8 +1580,8 @@ static int rt6_remove_exception_rt(struct rt6_info *rt)
  */
 static void rt6_update_exception_stamp_rt(struct rt6_info *rt)
 {
+	struct rt6_info *from = (struct rt6_info *)rt->dst.from;
 	struct rt6_exception_bucket *bucket;
-	struct fib6_info *from = rt->from;
 	struct in6_addr *src_key = NULL;
 	struct rt6_exception *rt6_ex;
 
@@ -1633,7 +1599,7 @@ static void rt6_update_exception_stamp_rt(struct rt6_info *rt)
 	 * Otherwise, the exception table is indexed by
 	 * a hash of only rt6i_dst.
 	 */
-	if (from->fib6_src.plen)
+	if (from->rt6i_src.plen)
 		src_key = &rt->rt6i_src.addr;
 #endif
 	rt6_ex = __rt6_find_exception_rcu(&bucket,
@@ -1645,176 +1611,8 @@ static void rt6_update_exception_stamp_rt(struct rt6_info *rt)
 	rcu_read_unlock();
 }
 
-static void rt6_exceptions_remove_prefsrc(struct fib6_info *rt)
-{
-	struct rt6_exception_bucket *bucket;
-	struct rt6_exception *rt6_ex;
-	int i;
-
-	bucket = rcu_dereference_protected(rt->rt6i_exception_bucket,
-					lockdep_is_held(&rt6_exception_lock));
-
-	if (bucket) {
-		for (i = 0; i < FIB6_EXCEPTION_BUCKET_SIZE; i++) {
-			hlist_for_each_entry(rt6_ex, &bucket->chain, hlist) {
-				rt6_ex->rt6i->rt6i_prefsrc.plen = 0;
-			}
-			bucket++;
-		}
-	}
-}
-
-static bool rt6_mtu_change_route_allowed(struct inet6_dev *idev,
-					 struct rt6_info *rt, int mtu)
-{
-	/* If the new MTU is lower than the route PMTU, this new MTU will be the
-	 * lowest MTU in the path: always allow updating the route PMTU to
-	 * reflect PMTU decreases.
-	 *
-	 * If the new MTU is higher, and the route PMTU is equal to the local
-	 * MTU, this means the old MTU is the lowest in the path, so allow
-	 * updating it: if other nodes now have lower MTUs, PMTU discovery will
-	 * handle this.
-	 */
-
-	if (dst_mtu(&rt->dst) >= mtu)
-		return true;
-
-	if (dst_mtu(&rt->dst) == idev->cnf.mtu6)
-		return true;
-
-	return false;
-}
-
-static void rt6_exceptions_update_pmtu(struct inet6_dev *idev,
-				       struct fib6_info *rt, int mtu)
-{
-	struct rt6_exception_bucket *bucket;
-	struct rt6_exception *rt6_ex;
-	int i;
-
-	bucket = rcu_dereference_protected(rt->rt6i_exception_bucket,
-					lockdep_is_held(&rt6_exception_lock));
-
-	if (!bucket)
-		return;
-
-	for (i = 0; i < FIB6_EXCEPTION_BUCKET_SIZE; i++) {
-		hlist_for_each_entry(rt6_ex, &bucket->chain, hlist) {
-			struct rt6_info *entry = rt6_ex->rt6i;
-
-			/* For RTF_CACHE with rt6i_pmtu == 0 (i.e. a redirected
-			 * route), the metrics of its rt->from have already
-			 * been updated.
-			 */
-			if (dst_metric_raw(&entry->dst, RTAX_MTU) &&
-			    rt6_mtu_change_route_allowed(idev, entry, mtu))
-				dst_metric_set(&entry->dst, RTAX_MTU, mtu);
-		}
-		bucket++;
-	}
-}
-
-#define RTF_CACHE_GATEWAY	(RTF_GATEWAY | RTF_CACHE)
-
-static void rt6_exceptions_clean_tohost(struct fib6_info *rt,
-					struct in6_addr *gateway)
-{
-	struct rt6_exception_bucket *bucket;
-	struct rt6_exception *rt6_ex;
-	struct hlist_node *tmp;
-	int i;
-
-	if (!rcu_access_pointer(rt->rt6i_exception_bucket))
-		return;
-
-	spin_lock_bh(&rt6_exception_lock);
-	bucket = rcu_dereference_protected(rt->rt6i_exception_bucket,
-				     lockdep_is_held(&rt6_exception_lock));
-
-	if (bucket) {
-		for (i = 0; i < FIB6_EXCEPTION_BUCKET_SIZE; i++) {
-			hlist_for_each_entry_safe(rt6_ex, tmp,
-						  &bucket->chain, hlist) {
-				struct rt6_info *entry = rt6_ex->rt6i;
-
-				if ((entry->rt6i_flags & RTF_CACHE_GATEWAY) ==
-				    RTF_CACHE_GATEWAY &&
-				    ipv6_addr_equal(gateway,
-						    &entry->rt6i_gateway)) {
-					rt6_remove_exception(bucket, rt6_ex);
-				}
-			}
-			bucket++;
-		}
-	}
-
-	spin_unlock_bh(&rt6_exception_lock);
-}
-
-static void rt6_age_examine_exception(struct rt6_exception_bucket *bucket,
-				      struct rt6_exception *rt6_ex,
-				      struct fib6_gc_args *gc_args,
-				      unsigned long now)
-{
-	struct rt6_info *rt = rt6_ex->rt6i;
-
-	if (atomic_read(&rt->dst.__refcnt) == 1 &&
-	    time_after_eq(now, rt->dst.lastuse + gc_args->timeout)) {
-		RT6_TRACE("aging clone %p\n", rt);
-		rt6_remove_exception(bucket, rt6_ex);
-		return;
-	} else if (rt->rt6i_flags & RTF_GATEWAY) {
-		struct neighbour *neigh;
-		__u8 neigh_flags = 0;
-
-		neigh = dst_neigh_lookup(&rt->dst, &rt->rt6i_gateway);
-		if (neigh) {
-			neigh_flags = neigh->flags;
-			neigh_release(neigh);
-		}
-		if (!(neigh_flags & NTF_ROUTER)) {
-			RT6_TRACE("purging route %p via non-router but gateway\n",
-				  rt);
-			rt6_remove_exception(bucket, rt6_ex);
-			return;
-		}
-	}
-	gc_args->more++;
-}
-
-void rt6_age_exceptions(struct fib6_info *rt,
-			struct fib6_gc_args *gc_args,
-			unsigned long now)
-{
-	struct rt6_exception_bucket *bucket;
-	struct rt6_exception *rt6_ex;
-	struct hlist_node *tmp;
-	int i;
-
-	if (!rcu_access_pointer(rt->rt6i_exception_bucket))
-		return;
-
-	spin_lock_bh(&rt6_exception_lock);
-	bucket = rcu_dereference_protected(rt->rt6i_exception_bucket,
-				    lockdep_is_held(&rt6_exception_lock));
-
-	if (bucket) {
-		for (i = 0; i < FIB6_EXCEPTION_BUCKET_SIZE; i++) {
-			hlist_for_each_entry_safe(rt6_ex, tmp,
-						  &bucket->chain, hlist) {
-				rt6_age_examine_exception(bucket, rt6_ex,
-							  gc_args, now);
-			}
-			bucket++;
-		}
-	}
-	spin_unlock_bh(&rt6_exception_lock);
-}
-
-/* must be called with rcu lock held */
-struct fib6_info *fib6_table_lookup(struct net *net, struct fib6_table *table,
-				    int oif, struct flowi6 *fl6, int strict)
+struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
+			       int oif, struct flowi6 *fl6, int flags)
 {
 	struct fib6_node *fn, *saved_fn;
 	struct fib6_info *f6i;
