@@ -1516,7 +1516,6 @@ static struct fib6_node *fib6_locate_1(struct fib6_node *root,
 
 		prev = fn;
 
-next:
 		/*
 		 *	We have more bits to go
 		 */
@@ -1540,21 +1539,16 @@ struct fib6_node *fib6_locate(struct fib6_node *root,
 	struct fib6_node *fn;
 
 	fn = fib6_locate_1(root, daddr, dst_len,
-			   offsetof(struct fib6_info, fib6_dst),
+			   offsetof(struct rt6_info, rt6i_dst),
 			   exact_match);
 
 #ifdef CONFIG_IPV6_SUBTREES
 	if (src_len) {
 		WARN_ON(saddr == NULL);
-		if (fn) {
-			struct fib6_node *subtree = FIB6_SUBTREE(fn);
-
-			if (subtree) {
-				fn = fib6_locate_1(subtree, saddr, src_len,
-					   offsetof(struct fib6_info, fib6_src),
+		if (fn && fn->subtree)
+			fn = fib6_locate_1(fn->subtree, saddr, src_len,
+					   offsetof(struct rt6_info, rt6i_src),
 					   exact_match);
-			}
-		}
 	}
 #endif
 

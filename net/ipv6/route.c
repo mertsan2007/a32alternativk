@@ -3233,7 +3233,7 @@ static int ip6_route_del(struct fib6_config *cfg,
 	fn = fib6_locate(&table->tb6_root,
 			 &cfg->fc_dst, cfg->fc_dst_len,
 			 &cfg->fc_src, cfg->fc_src_len,
-			 !(cfg->fc_flags & RTF_CACHE));
+			 true);
 
 	if (fn) {
 		for_each_fib6_node_rt_rcu(fn) {
@@ -3418,7 +3418,7 @@ static struct fib6_info *rt6_get_route_info(struct net *net,
 	if (!table)
 		return NULL;
 
-	rcu_read_lock();
+	read_lock_bh(&table->tb6_lock);
 	fn = fib6_locate(&table->tb6_root, prefix, prefixlen, NULL, 0, true);
 	if (!fn)
 		goto out;
