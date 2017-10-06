@@ -75,12 +75,12 @@ struct fib6_node {
 #ifdef CONFIG_IPV6_SUBTREES
 	struct fib6_node __rcu	*subtree;
 #endif
-	struct fib6_info __rcu	*leaf;
+	struct rt6_info __rcu	*leaf;
 
 	__u16			fn_bit;		/* bit key */
 	__u16			fn_flags;
 	int			fn_sernum;
-	struct fib6_info __rcu	*rr_ptr;
+	struct rt6_info __rcu	*rr_ptr;
 	struct rcu_head		rcu;
 };
 
@@ -221,11 +221,11 @@ struct rt6_info {
 
 #define for_each_fib6_node_rt_rcu(fn)					\
 	for (rt = rcu_dereference((fn)->leaf); rt;			\
-	     rt = rcu_dereference(rt->fib6_next))
+	     rt = rcu_dereference(rt->dst.rt6_next))
 
 #define for_each_fib6_walker_rt(w)					\
 	for (rt = (w)->leaf; rt;					\
-	     rt = rcu_dereference_protected(rt->fib6_next, 1))
+	     rt = rcu_dereference_protected(rt->dst.rt6_next, 1))
 
 static inline struct inet6_dev *ip6_dst_idev(struct dst_entry *dst)
 {
