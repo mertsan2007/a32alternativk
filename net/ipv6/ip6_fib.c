@@ -2060,7 +2060,7 @@ static void fib6_flush_trees(struct net *net)
  *	Garbage collection
  */
 
-static int fib6_age(struct fib6_info *rt, void *arg)
+static int fib6_age(struct rt6_info *rt, void *arg)
 {
 	struct fib6_gc_args *gc_args = arg;
 	unsigned long now = jiffies;
@@ -2074,6 +2074,32 @@ static int fib6_age(struct fib6_info *rt, void *arg)
 		if (time_after(now, rt->expires)) {
 			RT6_TRACE("expiring %p\n", rt);
 			return -1;
+		}
+		gc_args->more++;
+	/* The following part will soon be removed when the exception
+	 * table is hooked up to store all cached routes.
+	 */
+	} else if (rt->rt6i_flags & RTF_CACHE) {
+		if (time_after_eq(now, rt->dst.lastuse + gc_args->timeout))
+			rt->dst.obsolete = DST_OBSOLETE_KILL;
+		if (atomic_read(&rt->dst.__refcnt) == 1 &&
+		    rt->dst.obsolete == DST_OBSOLETE_KILL) {
+			RT6_TRACE("aging clone %p\n", rt);
+			return -1;
+		} else if (rt->rt6i_flags & RTF_GATEWAY) {
+			struct neighbour *neigh;
+			__u8 neigh_flags = 0;
+
+			neigh = dst_neigh_lookup(&rt->dst, &rt->rt6i_gateway);
+			if (neigh) {
+				neigh_flags = neigh->flags;
+				neigh_release(neigh);
+			}
+			if (!(neigh_flags & NTF_ROUTER)) {
+				RT6_TRACE("purging route %p via non-router but gateway\n",
+					  rt);
+				return -1;
+			}
 		}
 		gc_args->more++;
 	}
