@@ -676,13 +676,11 @@ void fib6_metric_set(struct fib6_info *f6i, int metric, u32 val)
  *	node.
  */
 
-static struct fib6_node *fib6_add_1(struct net *net,
-				    struct fib6_table *table,
-				    struct fib6_node *root,
-				    struct in6_addr *addr, int plen,
-				    int offset, int allow_create,
-				    int replace_required,
-				    struct netlink_ext_ack *extack)
+static struct fib6_node *fib6_add_1(struct fib6_node *root,
+				     struct in6_addr *addr, int plen,
+				     int offset, int allow_create,
+				     int replace_required,
+				     struct netlink_ext_ack *extack)
 {
 	struct fib6_node *fn, *in, *ln;
 	struct fib6_node *pn = NULL;
@@ -779,7 +777,8 @@ static struct fib6_node *fib6_add_1(struct net *net,
 	if (!ln)
 		return ERR_PTR(-ENOMEM);
 	ln->fn_bit = plen;
-	RCU_INIT_POINTER(ln->parent, pn);
+
+	ln->parent = pn;
 
 	if (dir)
 		rcu_assign_pointer(pn->right, ln);
@@ -838,8 +837,7 @@ insert_above:
 
 		RCU_INIT_POINTER(in->parent, pn);
 		in->leaf = fn->leaf;
-		atomic_inc(&rcu_dereference_protected(in->leaf,
-				lockdep_is_held(&table->tb6_lock))->fib6_ref);
+		atomic_inc(&in->leaf->rt6i_ref);
 
 		/* update parent pointer */
 		if (dir)
@@ -849,8 +847,8 @@ insert_above:
 
 		ln->fn_bit = plen;
 
-		RCU_INIT_POINTER(ln->parent, in);
-		rcu_assign_pointer(fn->parent, in);
+		ln->parent = in;
+		fn->parent = in;
 
 		if (addr_bit_set(addr, bit)) {
 			rcu_assign_pointer(in->right, ln);
@@ -874,7 +872,12 @@ insert_above:
 
 		ln->fn_bit = plen;
 
-		RCU_INIT_POINTER(ln->parent, pn);
+		ln->parent = pn;
+
+		if (dir)
+			pn->right = ln;
+		else
+			pn->left  = ln;
 
 		if (addr_bit_set(&key->addr, plen))
 			RCU_INIT_POINTER(ln->right, fn);
@@ -1194,24 +1197,18 @@ void fib6_force_start_gc(struct net *net)
 			  jiffies + net->ipv6.sysctl.ip6_rt_gc_interval);
 }
 
-static void __fib6_update_sernum_upto_root(struct fib6_info *rt,
-					   int sernum)
+static void fib6_update_sernum_upto_root(struct rt6_info *rt,
+					 int sernum)
 {
-	struct fib6_node *fn = rcu_dereference_protected(rt->fib6_node,
-				lockdep_is_held(&rt->fib6_table->tb6_lock));
+	struct fib6_node *fn = rcu_dereference_protected(rt->rt6i_node,
+				lockdep_is_held(&rt->rt6i_table->tb6_lock));
 
 	/* paired with smp_rmb() in rt6_get_cookie_safe() */
 	smp_wmb();
 	while (fn) {
-		WRITE_ONCE(fn->fn_sernum, sernum);
-		fn = rcu_dereference_protected(fn->parent,
-				lockdep_is_held(&rt->fib6_table->tb6_lock));
+		fn->fn_sernum = sernum;
+		fn = fn->parent;
 	}
-}
-
-void fib6_update_sernum_upto_root(struct net *net, struct fib6_info *rt)
-{
-	__fib6_update_sernum_upto_root(rt, fib6_new_sernum(net));
 }
 
 /*
@@ -1245,9 +1242,8 @@ int fib6_add(struct fib6_node *root, struct fib6_info *rt,
 	if (!allow_create && !replace_required)
 		pr_warn("RTM_NEWROUTE with no NLM_F_CREATE or NLM_F_REPLACE\n");
 
-	fn = fib6_add_1(info->nl_net, table, root,
-			&rt->fib6_dst.addr, rt->fib6_dst.plen,
-			offsetof(struct fib6_info, fib6_dst), allow_create,
+	fn = fib6_add_1(root, &rt->rt6i_dst.addr, rt->rt6i_dst.plen,
+			offsetof(struct rt6_info, rt6i_dst), allow_create,
 			replace_required, extack);
 	if (IS_ERR(fn)) {
 		err = PTR_ERR(fn);
@@ -1286,9 +1282,9 @@ int fib6_add(struct fib6_node *root, struct fib6_info *rt,
 
 			/* Now add the first leaf node to new subtree */
 
-			sn = fib6_add_1(info->nl_net, table, sfn,
-					&rt->fib6_src.addr, rt->fib6_src.plen,
-					offsetof(struct fib6_info, fib6_src),
+			sn = fib6_add_1(sfn, &rt->rt6i_src.addr,
+					rt->rt6i_src.plen,
+					offsetof(struct rt6_info, rt6i_src),
 					allow_create, replace_required, extack);
 
 			if (IS_ERR(sn)) {
@@ -1305,9 +1301,9 @@ int fib6_add(struct fib6_node *root, struct fib6_info *rt,
 			rcu_assign_pointer(sfn->parent, fn);
 			rcu_assign_pointer(fn->subtree, sfn);
 		} else {
-			sn = fib6_add_1(info->nl_net, table, FIB6_SUBTREE(fn),
-					&rt->fib6_src.addr, rt->fib6_src.plen,
-					offsetof(struct fib6_info, fib6_src),
+			sn = fib6_add_1(fn->subtree, &rt->rt6i_src.addr,
+					rt->rt6i_src.plen,
+					offsetof(struct rt6_info, rt6i_src),
 					allow_create, replace_required, extack);
 
 			if (IS_ERR(sn)) {
@@ -1331,8 +1327,10 @@ int fib6_add(struct fib6_node *root, struct fib6_info *rt,
 #endif
 
 	err = fib6_add_rt2node(fn, rt, info, mxc);
-	if (!err)
+	if (!err) {
+		fib6_update_sernum_upto_root(rt, sernum);
 		fib6_start_gc(info->nl_net, rt);
+	}
 
 out:
 	if (err) {
