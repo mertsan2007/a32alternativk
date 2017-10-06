@@ -1424,10 +1424,8 @@ static struct fib6_node *fib6_node_lookup_1(struct fib6_node *root,
 	}
 
 	while (fn) {
-		struct fib6_node *subtree = FIB6_SUBTREE(fn);
-
-		if (subtree || fn->fn_flags & RTN_RTINFO) {
-			struct fib6_info *leaf = rcu_dereference(fn->leaf);
+		if (FIB6_SUBTREE(fn) || fn->fn_flags & RTN_RTINFO) {
+			struct rt6_info *leaf = fn->leaf;
 			struct rt6key *key;
 
 			if (!leaf)
@@ -1510,7 +1508,7 @@ static struct fib6_node *fib6_locate_1(struct fib6_node *root,
 	struct fib6_node *fn, *prev = NULL;
 
 	for (fn = root; fn ; ) {
-		struct fib6_info *leaf = rcu_dereference(fn->leaf);
+		struct rt6_info *leaf = fn->leaf;
 		struct rt6key *key;
 
 		/* This node is being deleted */
@@ -1535,6 +1533,7 @@ static struct fib6_node *fib6_locate_1(struct fib6_node *root,
 
 		prev = fn;
 
+next:
 		/*
 		 *	We have more bits to go
 		 */

@@ -694,9 +694,9 @@ out:
 	return match;
 }
 
-static struct fib6_info *find_rr_leaf(struct fib6_node *fn,
-				     struct fib6_info *leaf,
-				     struct fib6_info *rr_head,
+static struct rt6_info *find_rr_leaf(struct fib6_node *fn,
+				     struct rt6_info *leaf,
+				     struct rt6_info *rr_head,
 				     u32 metric, int oif, int strict,
 				     bool *do_rr)
 {
@@ -714,9 +714,8 @@ static struct fib6_info *find_rr_leaf(struct fib6_node *fn,
 		match = find_match(rt, oif, strict, &mpri, match, do_rr);
 	}
 
-	for (rt = leaf; rt && rt != rr_head;
-	     rt = rcu_dereference(rt->fib6_next)) {
-		if (rt->fib6_metric != metric) {
+	for (rt = leaf; rt && rt != rr_head; rt = rt->dst.rt6_next) {
+		if (rt->rt6i_metric != metric) {
 			cont = rt;
 			break;
 		}
@@ -733,42 +732,29 @@ static struct fib6_info *find_rr_leaf(struct fib6_node *fn,
 	return match;
 }
 
-static struct fib6_info *rt6_select(struct net *net, struct fib6_node *fn,
+static struct rt6_info *rt6_select(struct net *net, struct fib6_node *fn,
 				   int oif, int strict)
 {
-	struct fib6_info *leaf = rcu_dereference(fn->leaf);
-	struct fib6_info *match, *rt0;
+	struct rt6_info *leaf = fn->leaf;
+	struct rt6_info *match, *rt0;
 	bool do_rr = false;
 	int key_plen;
 
-	if (!leaf || leaf == net->ipv6.fib6_null_entry)
-		return net->ipv6.fib6_null_entry;
+	if (!leaf)
+		return net->ipv6.ip6_null_entry;
 
-	rt0 = rcu_dereference(fn->rr_ptr);
+	rt0 = fn->rr_ptr;
 	if (!rt0)
-		rt0 = leaf;
+		fn->rr_ptr = rt0 = leaf;
 
-	/* Double check to make sure fn is not an intermediate node
-	 * and fn->leaf does not points to its child's leaf
-	 * (This might happen if all routes under fn are deleted from
-	 * the tree and fib6_repair_tree() is called on the node.)
-	 */
-	key_plen = rt0->fib6_dst.plen;
-#ifdef CONFIG_IPV6_SUBTREES
-	if (rt0->fib6_src.plen)
-		key_plen = rt0->fib6_src.plen;
-#endif
-	if (fn->fn_bit != key_plen)
-		return net->ipv6.fib6_null_entry;
-
-	match = find_rr_leaf(fn, leaf, rt0, rt0->fib6_metric, oif, strict,
+	match = find_rr_leaf(fn, leaf, rt0, rt0->rt6i_metric, oif, strict,
 			     &do_rr);
 
 	if (do_rr) {
 		struct fib6_info *next = rcu_dereference(rt0->fib6_next);
 
 		/* no entries matched; do round-robin */
-		if (!next || next->fib6_metric != rt0->fib6_metric)
+		if (!next || next->rt6i_metric != rt0->rt6i_metric)
 			next = leaf;
 
 		if (next != rt0) {
@@ -780,7 +766,7 @@ static struct fib6_info *rt6_select(struct net *net, struct fib6_node *fn,
 		}
 	}
 
-	return match ? match : net->ipv6.fib6_null_entry;
+	return match ? match : net->ipv6.ip6_null_entry;
 }
 
 static bool rt6_is_gw_or_nonexthop(const struct fib6_info *rt)
@@ -1772,8 +1758,10 @@ struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
 		oif = 0;
 
 redo_rt6_select:
-	f6i = rt6_select(net, fn, oif, strict);
-	if (f6i == net->ipv6.fib6_null_entry) {
+	rt = rt6_select(net, fn, oif, strict);
+	if (rt->rt6i_nsiblings)
+		rt = rt6_multipath_select(rt, fl6, oif, strict);
+	if (rt == net->ipv6.ip6_null_entry) {
 		fn = fib6_backtrack(fn, &fl6->saddr);
 		if (fn)
 			goto redo_rt6_select;
