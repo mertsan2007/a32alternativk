@@ -2463,8 +2463,8 @@ static struct fib6_info *addrconf_get_prefix_route(const struct in6_addr *pfx,
 	if (!fn)
 		goto out;
 
-	for_each_fib6_node_rt_rcu(fn) {
-		if (rt->fib6_nh.nh_dev->ifindex != dev->ifindex)
+	for (rt = fn->leaf; rt; rt = rt->dst.rt6_next) {
+		if (rt->dst.dev->ifindex != dev->ifindex)
 			continue;
 		if ((rt->fib6_flags & flags) != flags)
 			continue;

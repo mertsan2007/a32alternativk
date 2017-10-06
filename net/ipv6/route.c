@@ -1066,9 +1066,8 @@ static struct rt6_info *ip6_pol_route_lookup(struct net *net,
 					     const struct sk_buff *skb,
 					     int flags)
 {
-	struct fib6_info *f6i;
+	struct rt6_info *rt, *rt_cache;
 	struct fib6_node *fn;
-	struct rt6_info *rt;
 
 	if (fl6->flowi6_flags & FLOWI_FLAG_SKIP_NH_OIF)
 		flags &= ~RT6_LOOKUP_F_IFACE;
@@ -1092,6 +1091,13 @@ restart:
 		if (fn)
 			goto restart;
 	}
+	/* Search through exception table */
+	rt_cache = rt6_find_cached_rt(rt, &fl6->daddr, &fl6->saddr);
+	if (rt_cache)
+		rt = rt_cache;
+
+	dst_use(&rt->dst, jiffies);
+	read_unlock_bh(&table->tb6_lock);
 
 	/* Search through exception table */
 	rt = rt6_find_cached_rt(f6i, &fl6->daddr, &fl6->saddr);
@@ -1771,7 +1777,8 @@ struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
 			       int oif, struct flowi6 *fl6, int flags)
 {
 	struct fib6_node *fn, *saved_fn;
-	struct fib6_info *f6i;
+	struct rt6_info *rt, *rt_cache;
+	int strict = 0;
 
 	fn = fib6_node_lookup(&table->tb6_root, &fl6->daddr, &fl6->saddr);
 	saved_fn = fn;
@@ -1793,8 +1800,10 @@ redo_rt6_select:
 		}
 	}
 
-	return f6i;
-}
+	/*Search through exception table */
+	rt_cache = rt6_find_cached_rt(rt, &fl6->daddr, &fl6->saddr);
+	if (rt_cache)
+		rt = rt_cache;
 
 struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
 			       int oif, struct flowi6 *fl6,
@@ -2308,7 +2317,7 @@ static void __ip6_rt_update_pmtu(struct dst_entry *dst, const struct sock *sk,
 		nrt6 = ip6_rt_cache_alloc(from, daddr, saddr);
 		if (nrt6) {
 			rt6_do_update_pmtu(nrt6, mtu);
-			if (rt6_insert_exception(nrt6, from))
+			if (rt6_insert_exception(nrt6, rt6))
 				dst_release_immediate(&nrt6->dst);
 		}
 		rcu_read_unlock();
@@ -2380,8 +2389,7 @@ static struct rt6_info *__ip6_route_redirect(struct net *net,
 					     int flags)
 {
 	struct ip6rd_flowi *rdfl = (struct ip6rd_flowi *)fl6;
-	struct rt6_info *ret = NULL, *rt_cache;
-	struct fib6_info *rt;
+	struct rt6_info *rt, *rt_cache;
 	struct fib6_node *fn;
 
 	/* Get the "current" route for this destination and
@@ -2413,14 +2421,14 @@ restart:
 		 * So we keep searching in the exception table if the gateway
 		 * is different.
 		 */
-		if (!ipv6_addr_equal(&rdfl->gateway, &rt->fib6_nh.nh_gw)) {
+		if (!ipv6_addr_equal(&rdfl->gateway, &rt->rt6i_gateway)) {
 			rt_cache = rt6_find_cached_rt(rt,
 						      &fl6->daddr,
 						      &fl6->saddr);
 			if (rt_cache &&
 			    ipv6_addr_equal(&rdfl->gateway,
 					    &rt_cache->rt6i_gateway)) {
-				ret = rt_cache;
+				rt = rt_cache;
 				break;
 			}
 			continue;
@@ -3216,7 +3224,7 @@ out:
 static int ip6_route_del(struct fib6_config *cfg,
 			 struct netlink_ext_ack *extack)
 {
-	struct rt6_info *rt_cache;
+	struct rt6_info *rt, *rt_cache;
 	struct fib6_table *table;
 	struct fib6_info *rt;
 	struct fib6_node *fn;
@@ -3233,21 +3241,16 @@ static int ip6_route_del(struct fib6_config *cfg,
 	fn = fib6_locate(&table->tb6_root,
 			 &cfg->fc_dst, cfg->fc_dst_len,
 			 &cfg->fc_src, cfg->fc_src_len,
-			 true);
+			 !(cfg->fc_flags & RTF_CACHE));
 
 	if (fn) {
-		for_each_fib6_node_rt_rcu(fn) {
+		for (rt = fn->leaf; rt; rt = rt->dst.rt6_next) {
 			if (cfg->fc_flags & RTF_CACHE) {
-				int rc;
-
 				rt_cache = rt6_find_cached_rt(rt, &cfg->fc_dst,
 							      &cfg->fc_src);
-				if (rt_cache) {
-					rc = ip6_del_cached_rt(rt_cache, cfg);
-					if (rc != -ESRCH)
-						return rc;
-				}
-				continue;
+				if (!rt_cache)
+					continue;
+				rt = rt_cache;
 			}
 			if (cfg->fc_ifindex &&
 			    (!rt->fib6_nh.nh_dev ||
@@ -3387,7 +3390,7 @@ static void rt6_do_redirect(struct dst_entry *dst, struct sock *sk, struct sk_bu
 	 * a cached route because rt6_insert_exception() will
 	 * takes care of it
 	 */
-	if (rt6_insert_exception(nrt, from)) {
+	if (rt6_insert_exception(nrt, rt)) {
 		dst_release_immediate(&nrt->dst);
 		goto out;
 	}
@@ -3737,12 +3740,8 @@ static int fib6_clean_tohost(struct fib6_info *rt, void *arg)
 {
 	struct in6_addr *gateway = (struct in6_addr *)arg;
 
-	/* RTF_CACHE_GATEWAY case will be removed once the exception
-	 * table is hooked up to store all cached routes.
-	 */
-	if ((((rt->rt6i_flags & RTF_RA_ROUTER) == RTF_RA_ROUTER) ||
-	     ((rt->rt6i_flags & RTF_CACHE_GATEWAY) == RTF_CACHE_GATEWAY)) &&
-	     ipv6_addr_equal(gateway, &rt->rt6i_gateway)) {
+	if (((rt->rt6i_flags & RTF_RA_ROUTER) == RTF_RA_ROUTER) &&
+	    ipv6_addr_equal(gateway, &rt->rt6i_gateway)) {
 		return -1;
 	}
 
@@ -4044,20 +4043,9 @@ static int rt6_mtu_change_route(struct fib6_info *rt, void *p_arg)
 	    dst_metric_raw(&rt->dst, RTAX_MTU) &&
 	    !dst_metric_locked(&rt->dst, RTAX_MTU)) {
 		spin_lock_bh(&rt6_exception_lock);
-		/* This case will be removed once the exception table
-		 * is hooked up.
-		 */
-		if (rt->rt6i_flags & RTF_CACHE) {
-			/* For RTF_CACHE with rt6i_pmtu == 0
-			 * (i.e. a redirected route),
-			 * the metrics of its rt->dst.from has already
-			 * been updated.
-			 */
-			if (rt->rt6i_pmtu && rt->rt6i_pmtu > arg->mtu)
-				rt->rt6i_pmtu = arg->mtu;
-		} else if (dst_mtu(&rt->dst) >= arg->mtu ||
-			   (dst_mtu(&rt->dst) < arg->mtu &&
-			    dst_mtu(&rt->dst) == idev->cnf.mtu6)) {
+		if (dst_mtu(&rt->dst) >= arg->mtu ||
+		    (dst_mtu(&rt->dst) < arg->mtu &&
+		     dst_mtu(&rt->dst) == idev->cnf.mtu6)) {
 			dst_metric_set(&rt->dst, RTAX_MTU, arg->mtu);
 		}
 		rt6_exceptions_update_pmtu(rt, arg->mtu);
