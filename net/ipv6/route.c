@@ -1274,15 +1274,17 @@ static struct rt6_info *rt6_make_pcpu_route(struct net *net,
 	dst_hold(&pcpu_rt->dst);
 	p = this_cpu_ptr(rt->rt6i_pcpu);
 	prev = cmpxchg(p, NULL, pcpu_rt);
-	BUG_ON(prev);
-
-	if (rt->fib6_destroying) {
-		struct fib6_info *from;
-
-		from = xchg((__force struct fib6_info **)&pcpu_rt->from, NULL);
-		fib6_info_release(from);
+	if (prev) {
+		/* If someone did it before us, return prev instead */
+		/* release refcnt taken by ip6_rt_pcpu_alloc() */
+		dst_release_immediate(&pcpu_rt->dst);
+		/* release refcnt taken by above dst_hold() */
+		dst_release_immediate(&pcpu_rt->dst);
+		dst_hold(&prev->dst);
+		pcpu_rt = prev;
 	}
 
+	rt6_dst_from_metrics_check(pcpu_rt);
 	return pcpu_rt;
 }
 
@@ -1876,8 +1878,28 @@ struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
 		local_bh_disable();
 		pcpu_rt = rt6_get_pcpu_route(f6i);
 
-		if (!pcpu_rt)
-			pcpu_rt = rt6_make_pcpu_route(net, f6i);
+		if (pcpu_rt) {
+			read_unlock_bh(&table->tb6_lock);
+		} else {
+			/* atomic_inc_not_zero() is needed when using rcu */
+			if (atomic_inc_not_zero(&rt->rt6i_ref)) {
+				/* We have to do the read_unlock first
+				 * because rt6_make_pcpu_route() may trigger
+				 * ip6_dst_gc() which will take the write_lock.
+				 *
+				 * No dst_hold() on rt is needed because grabbing
+				 * rt->rt6i_ref makes sure rt can't be released.
+				 */
+				read_unlock_bh(&table->tb6_lock);
+				pcpu_rt = rt6_make_pcpu_route(rt);
+				rt6_release(rt);
+			} else {
+				/* rt is already removed from tree */
+				read_unlock_bh(&table->tb6_lock);
+				pcpu_rt = net->ipv6.ip6_null_entry;
+				dst_hold(&pcpu_rt->dst);
+			}
+		}
 
 		local_bh_enable();
 		rcu_read_unlock();
