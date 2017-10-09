@@ -378,8 +378,11 @@ struct rt6_info *ip6_dst_alloc(struct net *net,
 	struct rt6_info *rt = __ip6_dst_alloc(net, dev, flags);
 
 	if (rt) {
-		rt6_info_init(rt);
-		atomic_inc(&net->ipv6.rt6_stats->fib_rt_alloc);
+		rt->rt6i_pcpu = alloc_percpu_gfp(struct rt6_info *, GFP_ATOMIC);
+		if (!rt->rt6i_pcpu) {
+			dst_release_immediate(&rt->dst);
+			return NULL;
+		}
 	}
 
 	return rt;
