@@ -1083,7 +1083,7 @@ ipv6_add_addr(struct inet6_dev *idev, const struct in6_addr *addr,
 	gfp_t gfp_flags = can_block ? GFP_KERNEL : GFP_ATOMIC;
 	struct net *net = dev_net(idev->dev);
 	struct inet6_ifaddr *ifa = NULL;
-	struct fib6_info *f6i = NULL;
+	struct rt6_info *rt = NULL;
 	struct in6_validator_info i6vi;
 	int err = 0;
 	int addr_type = ipv6_addr_type(addr);
@@ -1121,6 +1121,7 @@ ipv6_add_addr(struct inet6_dev *idev, const struct in6_addr *addr,
 	rt = addrconf_dst_alloc(net, idev, addr, false);
 	if (IS_ERR(rt)) {
 		err = PTR_ERR(rt);
+		rt = NULL;
 		goto out;
 	}
 
@@ -1182,8 +1183,8 @@ ipv6_add_addr(struct inet6_dev *idev, const struct in6_addr *addr,
 	inet6addr_notifier_call_chain(NETDEV_UP, ifa);
 out:
 	if (unlikely(err < 0)) {
-		fib6_info_release(f6i);
-
+		if (rt)
+			ip6_rt_put(rt);
 		if (ifa) {
 			if (ifa->idev)
 				in6_dev_put(ifa->idev);
