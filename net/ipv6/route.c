@@ -1142,24 +1142,6 @@ restart:
 
 	rcu_read_unlock();
 
-	/* Search through exception table */
-	rt = rt6_find_cached_rt(f6i, &fl6->daddr, &fl6->saddr);
-	if (rt) {
-		if (ip6_hold_safe(net, &rt, true))
-			dst_use_noref(&rt->dst, jiffies);
-	} else if (f6i == net->ipv6.fib6_null_entry) {
-		rt = net->ipv6.ip6_null_entry;
-		dst_hold(&rt->dst);
-	} else {
-		rt = ip6_create_rt_rcu(f6i);
-		if (!rt) {
-			rt = net->ipv6.ip6_null_entry;
-			dst_hold(&rt->dst);
-		}
-	}
-
-	rcu_read_unlock();
-
 	trace_fib6_table_lookup(net, rt, table, fl6);
 
 	return rt;
@@ -1908,14 +1890,14 @@ redo_rt6_select:
 		rt = net->ipv6.ip6_null_entry;
 		rcu_read_unlock();
 		dst_hold(&rt->dst);
-		trace_fib6_table_lookup(net, rt, table->tb6_id, fl6);
+		trace_fib6_table_lookup(net, rt, table, fl6);
 		return rt;
 	} else if (rt->rt6i_flags & RTF_CACHE) {
 		if (ip6_hold_safe(net, &rt, true))
 			dst_use_noref(&rt->dst, jiffies);
 
 		rcu_read_unlock();
-		trace_fib6_table_lookup(net, rt, table->tb6_id, fl6);
+		trace_fib6_table_lookup(net, rt, table, fl6);
 		return rt;
 	} else if (unlikely((fl6->flowi6_flags & FLOWI_FLAG_KNOWN_NH) &&
 			    !(f6i->fib6_flags & RTF_GATEWAY))) {
@@ -1949,7 +1931,7 @@ redo_rt6_select:
 		}
 
 uncached_rt_out:
-		trace_fib6_table_lookup(net, uncached_rt, table->tb6_id, fl6);
+		trace_fib6_table_lookup(net, uncached_rt, table, fl6);
 		return uncached_rt;
 
 	} else {
@@ -1977,7 +1959,7 @@ uncached_rt_out:
 		}
 		local_bh_enable();
 		rcu_read_unlock();
-		trace_fib6_table_lookup(net, pcpu_rt, table->tb6_id, fl6);
+		trace_fib6_table_lookup(net, pcpu_rt, table, fl6);
 		return pcpu_rt;
 	}
 }
@@ -2546,8 +2528,8 @@ out:
 
 	rcu_read_unlock();
 
-	trace_fib6_table_lookup(net, ret, table, fl6);
-	return ret;
+	trace_fib6_table_lookup(net, rt, table, fl6);
+	return rt;
 };
 
 static struct dst_entry *ip6_route_redirect(struct net *net,
