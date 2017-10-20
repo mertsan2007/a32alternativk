@@ -1812,48 +1812,6 @@ enum {
 					 * a congestion threshold. RTTs above
 					 * this indicate congestion
 					 */
-	BPF_SOCK_OPS_RTO_CB,		/* Called when an RTO has triggered.
-					 * Arg1: value of icsk_retransmits
-					 * Arg2: value of icsk_rto
-					 * Arg3: whether RTO has expired
-					 */
-	BPF_SOCK_OPS_RETRANS_CB,	/* Called when skb is retransmitted.
-					 * Arg1: sequence number of 1st byte
-					 * Arg2: # segments
-					 * Arg3: return value of
-					 *       tcp_transmit_skb (0 => success)
-					 */
-	BPF_SOCK_OPS_STATE_CB,		/* Called when TCP changes state.
-					 * Arg1: old_state
-					 * Arg2: new_state
-					 */
-	BPF_SOCK_OPS_TCP_LISTEN_CB,	/* Called on listen(2), right after
-					 * socket transition to LISTEN state.
-					 */
-	BPF_SOCK_OPS_RTT_CB,		/* Called on every RTT.
-					 */
-};
-
-/* List of TCP states. There is a build check in net/ipv4/tcp.c to detect
- * changes between the TCP and BPF versions. Ideally this should never happen.
- * If it does, we need to add code to convert them before calling
- * the BPF sock_ops function.
- */
-enum {
-	BPF_TCP_ESTABLISHED = 1,
-	BPF_TCP_SYN_SENT,
-	BPF_TCP_SYN_RECV,
-	BPF_TCP_FIN_WAIT1,
-	BPF_TCP_FIN_WAIT2,
-	BPF_TCP_TIME_WAIT,
-	BPF_TCP_CLOSE,
-	BPF_TCP_CLOSE_WAIT,
-	BPF_TCP_LAST_ACK,
-	BPF_TCP_LISTEN,
-	BPF_TCP_CLOSING,	/* Now a valid state */
-	BPF_TCP_NEW_SYN_RECV,
-
-	BPF_TCP_MAX_STATES	/* Leave at the end! */
 };
 
 #define TCP_BPF_IW		1001	/* Set TCP initial congestion window */
