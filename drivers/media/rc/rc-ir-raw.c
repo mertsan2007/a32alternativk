@@ -541,23 +541,11 @@ int ir_raw_encode_scancode(enum rc_proto protocol, u32 scancode,
 }
 EXPORT_SYMBOL(ir_raw_encode_scancode);
 
-/**
- * ir_raw_edge_handle() - Handle ir_raw_event_store_edge() processing
- *
- * @t:		timer_list
- *
- * This callback is armed by ir_raw_event_store_edge(). It does two things:
- * first of all, rather than calling ir_raw_event_handle() for each
- * edge and waking up the rc thread, 15 ms after the first edge
- * ir_raw_event_handle() is called. Secondly, generate a timeout event
- * no more IR is received after the rc_dev timeout.
- */
-static void ir_raw_edge_handle(struct timer_list *t)
+static void edge_handle(struct timer_list *t)
 {
 	struct ir_raw_event_ctrl *raw = from_timer(raw, t, edge_handle);
 	struct rc_dev *dev = raw->dev;
-	unsigned long flags;
-	ktime_t interval;
+	ktime_t interval = ktime_sub(ktime_get(), dev->raw->last_event);
 
 	spin_lock_irqsave(&dev->raw->edge_spinlock, flags);
 	interval = ktime_sub(ktime_get(), dev->raw->last_event);
@@ -622,9 +610,7 @@ int ir_raw_event_prepare(struct rc_dev *dev)
 
 	dev->raw->dev = dev;
 	dev->change_protocol = change_protocol;
-	dev->idle = true;
-	spin_lock_init(&dev->raw->edge_spinlock);
-	timer_setup(&dev->raw->edge_handle, ir_raw_edge_handle, 0);
+	timer_setup(&dev->raw->edge_handle, edge_handle, 0);
 	INIT_KFIFO(dev->raw->kfifo);
 
 	return 0;

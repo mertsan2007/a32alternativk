@@ -1675,9 +1675,7 @@ struct rc_dev *rc_allocate_device(enum rc_driver_type type)
 		dev->input_dev->setkeycode = ir_setkeycode;
 		input_set_drvdata(dev->input_dev, dev);
 
-		dev->timeout = IR_DEFAULT_TIMEOUT;
 		timer_setup(&dev->timer_keyup, ir_timer_keyup, 0);
-		timer_setup(&dev->timer_repeat, ir_timer_repeat, 0);
 
 		spin_lock_init(&dev->rc_map.lock);
 		spin_lock_init(&dev->keylock);
