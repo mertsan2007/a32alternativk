@@ -20,45 +20,7 @@
 #include "trace_probe.h"
 #include "trace.h"
 
-#ifdef CONFIG_MODULES
-struct bpf_trace_module {
-	struct module *module;
-	struct list_head list;
-};
-
-static LIST_HEAD(bpf_trace_modules);
-static DEFINE_MUTEX(bpf_module_mutex);
-
-static struct bpf_raw_event_map *bpf_get_raw_tracepoint_module(const char *name)
-{
-	struct bpf_raw_event_map *btp, *ret = NULL;
-	struct bpf_trace_module *btm;
-	unsigned int i;
-
-	mutex_lock(&bpf_module_mutex);
-	list_for_each_entry(btm, &bpf_trace_modules, list) {
-		for (i = 0; i < btm->module->num_bpf_raw_events; ++i) {
-			btp = &btm->module->bpf_raw_events[i];
-			if (!strcmp(btp->tp->name, name)) {
-				if (try_module_get(btm->module))
-					ret = btp;
-				goto out;
-			}
-		}
-	}
-out:
-	mutex_unlock(&bpf_module_mutex);
-	return ret;
-}
-#else
-static struct bpf_raw_event_map *bpf_get_raw_tracepoint_module(const char *name)
-{
-	return NULL;
-}
-#endif /* CONFIG_MODULES */
-
 u64 bpf_get_stackid(u64 r1, u64 r2, u64 r3, u64 r4, u64 r5);
-u64 bpf_get_stack(u64 r1, u64 r2, u64 r3, u64 r4, u64 r5);
 
 /**
  * trace_call_bpf - invoke BPF program
