@@ -357,7 +357,7 @@ static int call_fib6_entry_notifier(struct notifier_block *nb, struct net *net,
 
 static int call_fib6_entry_notifiers(struct net *net,
 				     enum fib_event_type event_type,
-				     struct fib6_info *rt,
+				     struct rt6_info *rt,
 				     struct netlink_ext_ack *extack)
 {
 	struct fib6_entry_notifier_info info = {
@@ -878,8 +878,8 @@ static void fib6_purge_rt(struct fib6_info *rt, struct fib6_node *fn,
  *	Insert routing information in a node.
  */
 
-static int fib6_add_rt2node(struct fib6_node *fn, struct fib6_info *rt,
-			    struct nl_info *info,
+static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
+			    struct nl_info *info, struct mx6_config *mxc,
 			    struct netlink_ext_ack *extack)
 {
 	struct rt6_info *leaf = rcu_dereference_protected(fn->leaf,
@@ -1028,7 +1028,7 @@ add:
 		rcu_assign_pointer(rt->rt6i_node, fn);
 		rcu_assign_pointer(*ins, rt);
 		call_fib6_entry_notifiers(info->nl_net, FIB_EVENT_ENTRY_ADD,
-					  rt);
+					  rt, extack);
 		if (!info->skip_notify)
 			inet6_rt_notify(RTM_NEWROUTE, rt, info, nlflags);
 		info->nl_net->ipv6.rt6_stats->fib_rt_entries++;
@@ -1059,7 +1059,7 @@ add:
 		rt->rt6_next = iter->rt6_next;
 		rcu_assign_pointer(*ins, rt);
 		call_fib6_entry_notifiers(info->nl_net, FIB_EVENT_ENTRY_REPLACE,
-					  rt);
+					  rt, extack);
 		if (!info->skip_notify)
 			inet6_rt_notify(RTM_NEWROUTE, rt, info, NLM_F_REPLACE);
 		if (!(fn->fn_flags & RTN_RTINFO)) {
@@ -1248,7 +1248,7 @@ int fib6_add(struct fib6_node *root, struct fib6_info *rt,
 	}
 #endif
 
-	err = fib6_add_rt2node(fn, rt, info, mxc);
+	err = fib6_add_rt2node(fn, rt, info, mxc, extack);
 	if (!err) {
 		__fib6_update_sernum_upto_root(rt, sernum);
 		fib6_start_gc(info->nl_net, rt);
