@@ -144,15 +144,6 @@ static struct ctl_table ipv6_table_template[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
 	},
-	{
-		.procname	= "fib_multipath_hash_policy",
-		.data		= &init_net.ipv6.sysctl.multipath_hash_policy,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler   = proc_rt6_multipath_hash_policy,
-		.extra1		= &zero,
-		.extra2		= &one,
-	},
 	{ }
 };
 
@@ -229,7 +220,6 @@ static int __net_init ipv6_sysctl_net_init(struct net *net)
 	ipv6_table[11].data = &net->ipv6.sysctl.max_hbh_opts_cnt;
 	ipv6_table[12].data = &net->ipv6.sysctl.max_dst_opts_len;
 	ipv6_table[13].data = &net->ipv6.sysctl.max_hbh_opts_len;
-	ipv6_table[14].data = &net->ipv6.sysctl.multipath_hash_policy,
 
 	ipv6_route_table = ipv6_route_sysctl_init(net);
 	if (!ipv6_route_table)
