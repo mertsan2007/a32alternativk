@@ -5688,10 +5688,13 @@ next:
 static int ext_analyzer_insn_hook(struct bpf_verifier_env *env,
 				  int insn_idx, int prev_insn_idx)
 {
-	if (!env->analyzer_ops || !env->analyzer_ops->insn_hook)
-		return 0;
+	if (env->analyzer_ops && env->analyzer_ops->insn_hook)
+		return env->analyzer_ops->insn_hook(env, insn_idx,
+						    prev_insn_idx);
+	if (env->dev_ops && env->dev_ops->insn_hook)
+		return env->dev_ops->insn_hook(env, insn_idx, prev_insn_idx);
 
-	return env->analyzer_ops->insn_hook(env, insn_idx, prev_insn_idx);
+	return 0;
 }
 
 static int do_check(struct bpf_verifier_env *env)
@@ -7098,6 +7101,12 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr)
 		env->strict_alignment = true;
 	if (attr->prog_flags & BPF_F_ANY_ALIGNMENT)
 		env->strict_alignment = false;
+
+	if (env->prog->aux->offload) {
+		ret = bpf_prog_offload_verifier_prep(env);
+		if (ret)
+			goto err_unlock;
+	}
 
 	ret = replace_map_fd_with_map_ptr(env);
 	if (ret < 0)

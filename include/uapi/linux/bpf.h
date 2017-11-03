@@ -269,6 +269,7 @@ union bpf_attr {
 		__u32		kern_version;	/* not used */
 		__u32		prog_flags;
 		char		prog_name[BPF_OBJ_NAME_LEN];
+		__u32		prog_target_ifindex;	/* ifindex of netdev to prep for */
 	};
 
 	struct { /* anonymous struct used by BPF_OBJ_* commands */
