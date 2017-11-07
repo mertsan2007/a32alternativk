@@ -14,8 +14,7 @@
 #include <linux/uaccess.h>
 #include <linux/ctype.h>
 #include <linux/kprobes.h>
-#include <linux/syscalls.h>
-#include <linux/error-injection.h>
+#include <asm/kprobes.h>
 
 #include "trace_probe.h"
 #include "trace.h"
@@ -86,9 +85,15 @@ BPF_CALL_2(bpf_override_return, struct pt_regs *, regs, unsigned long, rc)
 {
 	__this_cpu_write(bpf_kprobe_override, 1);
 	regs_set_return_value(regs, rc);
-	override_function_with_return(regs);
+	arch_ftrace_kprobe_override_function(regs);
 	return 0;
 }
+#else
+BPF_CALL_2(bpf_override_return, struct pt_regs *, regs, unsigned long, rc)
+{
+	return -EINVAL;
+}
+#endif
 
 static const struct bpf_func_proto bpf_override_return_proto = {
 	.func		= bpf_override_return,
@@ -97,7 +102,6 @@ static const struct bpf_func_proto bpf_override_return_proto = {
 	.arg1_type	= ARG_PTR_TO_CTX,
 	.arg2_type	= ARG_ANYTHING,
 };
-#endif
 
 BPF_CALL_3(bpf_probe_read, void *, dst, u32, size, const void *, unsafe_ptr)
 {
@@ -587,6 +591,10 @@ static const struct bpf_func_proto *kprobe_prog_func_proto(enum bpf_func_id func
 		return &bpf_get_stackid_proto;
 	case BPF_FUNC_perf_event_read_value:
 		return &bpf_perf_event_read_value_proto;
+	case BPF_FUNC_override_return:
+		pr_warn_ratelimited("%s[%d] is installing a program with bpf_override_return helper that may cause unexpected behavior!",
+				    current->comm, task_pid_nr(current));
+		return &bpf_override_return_proto;
 	default:
 		return tracing_func_proto(func_id);
 	}
@@ -808,13 +816,8 @@ int perf_event_attach_bpf_prog(struct perf_event *event,
 	struct bpf_prog_array *new_array;
 	int ret = -EEXIST;
 
-	/*
-	 * Kprobe override only works for ftrace based kprobes, and only if they
-	 * are on the opt-in list.
-	 */
-	if (prog->kprobe_override &&
-	    (!trace_kprobe_ftrace(event->tp_event) ||
-	     !trace_kprobe_error_injectable(event->tp_event)))
+	/* Kprobe override only works for ftrace based kprobes. */
+	if (prog->kprobe_override && !trace_kprobe_ftrace(event->tp_event))
 		return -EINVAL;
 
 	mutex_lock(&bpf_event_mutex);

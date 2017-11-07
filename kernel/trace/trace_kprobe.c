@@ -95,21 +95,6 @@ int trace_kprobe_ftrace(struct trace_event_call *call)
 	return kprobe_ftrace(&tk->rp.kp);
 }
 
-int trace_kprobe_error_injectable(struct trace_event_call *call)
-{
-	struct trace_kprobe *tk = (struct trace_kprobe *)call->data;
-	unsigned long addr;
-
-	if (tk->symbol) {
-		addr = (unsigned long)
-			kallsyms_lookup_name(trace_kprobe_symbol(tk));
-		addr += tk->rp.kp.offset;
-	} else {
-		addr = (unsigned long)tk->rp.kp.addr;
-	}
-	return within_error_injection_list(addr);
-}
-
 static int register_kprobe_event(struct trace_kprobe *tk);
 static int unregister_kprobe_event(struct trace_kprobe *tk);
 
