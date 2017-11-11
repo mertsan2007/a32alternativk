@@ -459,10 +459,6 @@ static void ip6gre_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
 		ip6_redirect(skb, net, skb->dev->ifindex, 0,
 			     sock_net_uid(net, NULL));
 		return;
-	case NDISC_REDIRECT:
-		ip6_redirect(skb, net, skb->dev->ifindex, 0,
-			     sock_net_uid(net, NULL));
-		return;
 	}
 
 	if (time_before(jiffies, t->err_time + IP6TUNNEL_ERR_TIMEO))
@@ -693,44 +689,6 @@ static netdev_tx_t __gre6_xmit(struct sk_buff *skb,
 
 	/* Push GRE header. */
 	protocol = (dev->type == ARPHRD_ETHER) ? htons(ETH_P_TEB) : proto;
-
-	if (tunnel->parms.collect_md) {
-		struct ip_tunnel_info *tun_info;
-		const struct ip_tunnel_key *key;
-		__be16 flags;
-
-		tun_info = skb_tunnel_info(skb);
-		if (unlikely(!tun_info ||
-			     !(tun_info->mode & IP_TUNNEL_INFO_TX) ||
-			     ip_tunnel_info_af(tun_info) != AF_INET6))
-			return -EINVAL;
-
-		key = &tun_info->key;
-		memset(fl6, 0, sizeof(*fl6));
-		fl6->flowi6_proto = IPPROTO_GRE;
-		fl6->daddr = key->u.ipv6.dst;
-		fl6->flowlabel = key->label;
-		fl6->flowi6_uid = sock_net_uid(dev_net(dev), NULL);
-
-		dsfield = key->tos;
-		flags = key->tun_flags &
-			(TUNNEL_CSUM | TUNNEL_KEY | TUNNEL_SEQ);
-		tunnel->tun_hlen = gre_calc_hlen(flags);
-
-		gre_build_header(skb, tunnel->tun_hlen,
-				 flags, protocol,
-				 tunnel_id_to_key32(tun_info->key.tun_id),
-				 (flags | TUNNEL_SEQ) ? htonl(tunnel->o_seqno++)
-						      : 0);
-
-	} else {
-		if (tunnel->parms.o_flags & TUNNEL_SEQ)
-			tunnel->o_seqno++;
-
-		gre_build_header(skb, tunnel->tun_hlen, tunnel->parms.o_flags,
-				 protocol, tunnel->parms.o_key,
-				 htonl(tunnel->o_seqno));
-	}
 
 	return ip6_tnl_xmit(skb, dev, dsfield, fl6, encap_limit, pmtu,
 			    NEXTHDR_GRE);
