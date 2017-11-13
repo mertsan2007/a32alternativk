@@ -42,14 +42,36 @@
 #include <net/strparser.h>
 #include <net/tls.h>
 
-#define MAX_IV_SIZE	TLS_CIPHER_AES_GCM_128_IV_SIZE
+static void trim_sg(struct sock *sk, struct scatterlist *sg,
+		    int *sg_num_elem, unsigned int *sg_size, int target_size)
+{
+	int i = *sg_num_elem - 1;
+	int trim = *sg_size - target_size;
 
-static int tls_do_decryption(struct sock *sk,
-			     struct scatterlist *sgin,
-			     struct scatterlist *sgout,
-			     char *iv_recv,
-			     size_t data_len,
-			     struct aead_request *aead_req)
+	if (trim <= 0) {
+		WARN_ON(trim < 0);
+		return;
+	}
+
+	*sg_size = target_size;
+	while (trim >= sg[i].length) {
+		trim -= sg[i].length;
+		sk_mem_uncharge(sk, sg[i].length);
+		put_page(sg_page(&sg[i]));
+		i--;
+
+		if (i < 0)
+			goto out;
+	}
+
+	sg[i].length -= trim;
+	sk_mem_uncharge(sk, trim);
+
+out:
+	*sg_num_elem = i + 1;
+}
+
+static void trim_both_sgl(struct sock *sk, int target_size)
 {
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
 	struct tls_sw_context_rx *ctx = tls_sw_ctx_rx(tls_ctx);
@@ -451,38 +473,8 @@ static int tls_push_record(struct sock *sk, int flags,
 	sg_mark_end(ctx->sg_plaintext_data + ctx->sg_plaintext_num_elem - 1);
 	sg_mark_end(ctx->sg_encrypted_data + ctx->sg_encrypted_num_elem - 1);
 
-	split_point = msg_pl->apply_bytes;
-	split = split_point && split_point < msg_pl->sg.size;
-	if (split) {
-		rc = tls_split_open_record(sk, rec, &tmp, msg_pl, msg_en,
-					   split_point, tls_ctx->tx.overhead_size,
-					   &orig_end);
-		if (rc < 0)
-			return rc;
-		sk_msg_trim(sk, msg_en, msg_pl->sg.size +
-			    tls_ctx->tx.overhead_size);
-	}
-
-	rec->tx_flags = flags;
-	req = &rec->aead_req;
-
-	i = msg_pl->sg.end;
-	sk_msg_iter_var_prev(i);
-	sg_mark_end(sk_msg_elem(msg_pl, i));
-
-	i = msg_pl->sg.start;
-	sg_chain(rec->sg_aead_in, 2, rec->inplace_crypto ?
-		 &msg_en->sg.data[i] : &msg_pl->sg.data[i]);
-
-	i = msg_en->sg.end;
-	sk_msg_iter_var_prev(i);
-	sg_mark_end(sk_msg_elem(msg_en, i));
-
-	i = msg_en->sg.start;
-	sg_chain(rec->sg_aead_out, 2, &msg_en->sg.data[i]);
-
-	tls_make_aad(rec->aad_space, msg_pl->sg.size,
-		     tls_ctx->tx.rec_seq, tls_ctx->tx.rec_seq_size,
+	tls_make_aad(ctx->aad_space, ctx->sg_plaintext_size,
+		     tls_ctx->rec_seq, tls_ctx->rec_seq_size,
 		     record_type);
 
 	tls_fill_prepend(tls_ctx,
