@@ -285,7 +285,7 @@ static int tls_do_encryption(struct tls_context *tls_ctx,
 	struct aead_request *aead_req;
 	int rc;
 
-	aead_req = kmalloc(req_size, flags);
+	aead_req = kzalloc(req_size, flags);
 	if (!aead_req)
 		return -ENOMEM;
 
