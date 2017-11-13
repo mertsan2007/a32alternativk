@@ -204,7 +204,6 @@ struct tls_context {
 	unsigned long flags;
 
 	int (*push_pending_record)(struct sock *sk, int flags);
-	void (*free_resources)(struct sock *sk);
 
 	void (*sk_write_space)(struct sock *sk);
 	void (*sk_destruct)(struct sock *sk);
@@ -247,6 +246,7 @@ int tls_sw_sendmsg(struct sock *sk, struct msghdr *msg, size_t size);
 int tls_sw_sendpage(struct sock *sk, struct page *page,
 		    int offset, size_t size, int flags);
 void tls_sw_close(struct sock *sk, long timeout);
+void tls_sw_free_tx_resources(struct sock *sk);
 
 void tls_sk_destruct(struct sock *sk, struct tls_context *ctx);
 int tls_push_sg(struct sock *sk, struct tls_context *ctx,

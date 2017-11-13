@@ -1639,7 +1639,7 @@ read_failure:
 	return ret;
 }
 
-static void tls_sw_free_resources(struct sock *sk)
+void tls_sw_free_tx_resources(struct sock *sk)
 {
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
 	struct tls_sw_context_rx *ctx = tls_sw_ctx_rx(tls_ctx);
@@ -1705,6 +1705,7 @@ void tls_sw_free_resources_tx(struct sock *sk)
 	tls_free_open_rec(sk);
 
 	kfree(ctx);
+	kfree(tls_ctx);
 }
 
 void tls_sw_release_resources_rx(struct sock *sk)
@@ -1818,7 +1819,6 @@ int tls_set_sw_offload(struct sock *sk, struct tls_context *ctx, int tx)
 	}
 
 	ctx->priv_ctx = (struct tls_offload_context *)sw_ctx;
-	ctx->free_resources = tls_sw_free_resources;
 
 	crypto_info = &ctx->crypto_send;
 	switch (crypto_info->cipher_type) {
