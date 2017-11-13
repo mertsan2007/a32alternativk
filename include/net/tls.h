@@ -188,6 +188,8 @@ struct tls_context {
 	struct net_device *netdev;
 	refcount_t refcount;
 
+	u8 tx_conf:2;
+
 	u16 prepend_size;
 	u16 tag_size;
 	u16 overhead_size;
