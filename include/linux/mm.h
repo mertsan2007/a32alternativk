@@ -1897,29 +1897,29 @@ static inline void mm_dec_nr_pmds(struct mm_struct *mm)
 #endif
 
 #ifdef CONFIG_MMU
-static inline void mm_pgtables_bytes_init(struct mm_struct *mm)
+static inline void mm_nr_ptes_init(struct mm_struct *mm)
 {
-	atomic_long_set(&mm->pgtables_bytes, 0);
+	atomic_long_set(&mm->nr_ptes, 0);
 }
 
-static inline unsigned long mm_pgtables_bytes(const struct mm_struct *mm)
+static inline unsigned long mm_nr_ptes(const struct mm_struct *mm)
 {
-	return atomic_long_read(&mm->pgtables_bytes);
+	return atomic_long_read(&mm->nr_ptes);
 }
 
 static inline void mm_inc_nr_ptes(struct mm_struct *mm)
 {
-	atomic_long_add(PTRS_PER_PTE * sizeof(pte_t), &mm->pgtables_bytes);
+	atomic_long_inc(&mm->nr_ptes);
 }
 
 static inline void mm_dec_nr_ptes(struct mm_struct *mm)
 {
-	atomic_long_sub(PTRS_PER_PTE * sizeof(pte_t), &mm->pgtables_bytes);
+	atomic_long_dec(&mm->nr_ptes);
 }
 #else
+static inline void mm_nr_ptes_init(struct mm_struct *mm) {}
 
-static inline void mm_pgtables_bytes_init(struct mm_struct *mm) {}
-static inline unsigned long mm_pgtables_bytes(const struct mm_struct *mm)
+static inline unsigned long mm_nr_ptes(const struct mm_struct *mm)
 {
 	return 0;
 }
