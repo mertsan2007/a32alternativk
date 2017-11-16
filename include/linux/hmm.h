@@ -469,7 +469,9 @@ static inline void hmm_devmem_page_set_drvdata(struct page *page,
  */
 static inline unsigned long hmm_devmem_page_get_drvdata(const struct page *page)
 {
-	return page->hmm_data;
+	const unsigned long *drvdata = (const unsigned long *)&page->pgmap;
+
+	return drvdata[1];
 }
 
 
