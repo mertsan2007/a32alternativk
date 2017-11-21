@@ -486,6 +486,26 @@ struct fib6_info *fib6_multipath_select(const struct net *net,
 		break;
 	}
 
+	route_choosen = fl6->mp_hash % (match->rt6i_nsiblings + 1);
+	/* Don't change the route, if route_choosen == 0
+	 * (siblings does not include ourself)
+	 */
+	if (route_choosen)
+		list_for_each_entry_safe(sibling, next_sibling,
+				&match->rt6i_siblings, rt6i_siblings) {
+			route_choosen--;
+			if (route_choosen == 0) {
+				struct inet6_dev *idev = sibling->rt6i_idev;
+
+				if (!netif_carrier_ok(sibling->dst.dev) &&
+				    idev->cnf.ignore_routes_with_linkdown)
+					break;
+				if (rt6_score_route(sibling, oif, strict) < 0)
+					break;
+				match = sibling;
+				break;
+			}
+		}
 	return match;
 }
 
