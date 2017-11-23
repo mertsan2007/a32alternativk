@@ -599,8 +599,8 @@ static void ir_do_keyup(struct rc_dev *dev, bool sync)
 	if (!dev->keypressed)
 		return;
 
-	dev_dbg(&dev->dev, "keyup key 0x%04x\n", dev->last_keycode);
-	del_timer(&dev->timer_repeat);
+	IR_dprintk(1, "keyup key 0x%04x\n", dev->last_keycode);
+	del_timer_sync(&dev->timer_repeat);
 	input_report_key(dev->input_dev, dev->last_keycode, 0);
 	led_trigger_event(led_feedback, LED_OFF);
 	if (sync)
@@ -677,14 +677,6 @@ static void ir_timer_repeat(struct timer_list *t)
 				  msecs_to_jiffies(input->rep[REP_PERIOD]));
 	}
 	spin_unlock_irqrestore(&dev->keylock, flags);
-}
-
-static unsigned int repeat_period(int protocol)
-{
-	if (protocol >= ARRAY_SIZE(protocols))
-		return 100;
-
-	return protocols[protocol].repeat_period;
 }
 
 /**
@@ -1673,6 +1665,7 @@ struct rc_dev *rc_allocate_device(enum rc_driver_type type)
 		input_set_drvdata(dev->input_dev, dev);
 
 		timer_setup(&dev->timer_keyup, ir_timer_keyup, 0);
+		timer_setup(&dev->timer_repeat, ir_timer_repeat, 0);
 
 		spin_lock_init(&dev->rc_map.lock);
 		spin_lock_init(&dev->keylock);
@@ -1967,6 +1960,9 @@ void rc_unregister_device(struct rc_dev *dev)
 {
 	if (!dev)
 		return;
+
+	del_timer_sync(&dev->timer_keyup);
+	del_timer_sync(&dev->timer_repeat);
 
 	if (dev->driver_type == RC_DRIVER_IR_RAW)
 		ir_raw_event_unregister(dev);
