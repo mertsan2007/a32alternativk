@@ -1145,6 +1145,29 @@ out:
 	return retval;
 }
 
+static inline int tv2int(const struct timeval *a, const struct timeval *b)
+{
+	int usecs = 0;
+	int sec   = 0;
+
+	if (b->tv_usec > a->tv_usec) {
+		usecs = 1000000;
+		sec--;
+	}
+
+	usecs += a->tv_usec - b->tv_usec;
+
+	sec += a->tv_sec - b->tv_sec;
+	sec *= 1000;
+	usecs /= 1000;
+	sec += usecs;
+
+	if (sec < 0)
+		sec = 1000;
+
+	return sec;
+}
+
 /*
  * The directional pad behaves a bit differently, depending on whether this is
  * one of the older ffdc devices or a newer device. Newer devices appear to
@@ -1549,7 +1572,23 @@ static int imon_parse_press_type(struct imon_context *ictx,
 /*
  * Process the incoming packet
  */
-static void imon_incoming_packet(struct imon_context *ictx,
+/*
+ * Convert bit count to time duration (in us) and submit
+ * the value to lirc_dev.
+ */
+static void submit_data(struct imon_context *context)
+{
+	DEFINE_IR_RAW_EVENT(ev);
+
+	ev.pulse = context->rx.prev_bit;
+	ev.duration = US_TO_NS(context->rx.count * BIT_DURATION);
+	ir_raw_event_store_with_filter(context->rdev, &ev);
+}
+
+/*
+ * Process the incoming packet
+ */
+static void imon_incoming_ir_raw(struct imon_context *context,
 				 struct urb *urb, int intf)
 {
 	int len = urb->actual_length;
