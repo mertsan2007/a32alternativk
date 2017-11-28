@@ -34,6 +34,7 @@ struct sk_buff;
 
 struct dst_entry {
 	struct net_device       *dev;
+	struct rcu_head		rcu_head;
 	struct  dst_ops	        *ops;
 	unsigned long		_metrics;
 	unsigned long           expires;
@@ -71,6 +72,19 @@ struct dst_entry {
 	unsigned short		header_len;	/* more space at head required */
 	unsigned short		trailer_len;	/* space to reserve at tail */
 
+#ifdef CONFIG_IP_ROUTE_CLASSID
+	__u32			tclassid;
+#else
+	__u32			__pad2;
+#endif
+
+#ifdef CONFIG_64BIT
+	/*
+	 * Align __refcnt to a 64 bytes alignment
+	 * (L1_CACHE_SIZE would be too much)
+	 */
+	long			__pad_to_align_refcnt[3];
+#endif
 	/*
 	 * __refcnt wants to be on a different cache line from
 	 * input/output/ops or performance tanks badly

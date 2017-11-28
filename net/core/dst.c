@@ -120,8 +120,11 @@ struct dst_entry *dst_destroy(struct dst_entry * dst)
 	smp_rmb();
 
 #ifdef CONFIG_XFRM
-	if (dst->xfrm)
-		child = dst->child;
+	if (dst->xfrm) {
+		struct xfrm_dst *xdst = (struct xfrm_dst *) dst;
+
+		child = xdst->child;
+	}
 #endif
 	if (!(dst->flags & DST_NOCOUNT))
 		dst_entries_add(dst->ops, -1);

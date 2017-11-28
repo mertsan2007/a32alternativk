@@ -994,7 +994,6 @@ struct xfrm_dst {
 	} u;
 	struct dst_entry *route;
 	struct dst_entry *child;
-	struct dst_entry *path;
 	struct xfrm_policy *pols[XFRM_POLICY_TYPE_MAX];
 	int num_pols, num_xfrms;
 	u32 xfrm_genid;
@@ -1008,8 +1007,10 @@ struct xfrm_dst {
 static inline struct dst_entry *xfrm_dst_child(const struct dst_entry *dst)
 {
 #ifdef CONFIG_XFRM
-	if (dst->xfrm)
-		return dst->child;
+	if (dst->xfrm) {
+		struct xfrm_dst *xdst = (struct xfrm_dst *) dst;
+		return xdst->child;
+	}
 #endif
 	return NULL;
 }
@@ -1017,7 +1018,7 @@ static inline struct dst_entry *xfrm_dst_child(const struct dst_entry *dst)
 #ifdef CONFIG_XFRM
 static inline void xfrm_dst_set_child(struct xfrm_dst *xdst, struct dst_entry *child)
 {
-	xdst->u.dst.child = child;
+	xdst->child = child;
 }
 
 static inline void xfrm_dst_destroy(struct xfrm_dst *xdst)
@@ -1933,7 +1934,7 @@ static inline bool xfrm_dst_offload_ok(struct dst_entry *dst)
 		return false;
 
 	xdst = (struct xfrm_dst *) dst;
-	if (x->xso.offload_handle && (x->xso.dev == xfrm_dst_path(dst)->dev) &&
+	if (x->xso.offload_handle && (x->xso.dev == dst->path->dev) &&
 	    !xdst->child->xfrm)
 		return true;
 
