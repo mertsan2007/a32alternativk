@@ -1666,9 +1666,10 @@ static struct dst_entry *xfrm_bundle_create(struct xfrm_policy *policy,
 	xfrm_init_path(xdst0, dst, nfheader_len);
 	xfrm_init_pmtu(&xdst_prev->u.dst);
 
-	for (xdst_prev = xdst0; xdst_prev != (struct xfrm_dst *)dst;
-	     xdst_prev = (struct xfrm_dst *) xfrm_dst_child(&xdst_prev->u.dst)) {
-		err = xfrm_fill_dst(xdst_prev, dev, fl);
+	for (dst_prev = dst0; dst_prev != dst; dst_prev = xfrm_dst_child(dst_prev)) {
+		struct xfrm_dst *xdst = (struct xfrm_dst *)dst_prev;
+
+		err = xfrm_fill_dst(xdst, dev, fl);
 		if (err)
 			goto free_dst;
 
@@ -2671,7 +2672,9 @@ static unsigned int xfrm_mtu(const struct dst_entry *dst)
 static const void *xfrm_get_dst_nexthop(const struct dst_entry *dst,
 					const void *daddr)
 {
-	while (dst->xfrm) {
+	const struct dst_entry *path = dst->path;
+
+	for (; dst != path; dst = xfrm_dst_child(dst)) {
 		const struct xfrm_state *xfrm = dst->xfrm;
 
 		if (xfrm->props.mode == XFRM_MODE_TRANSPORT)
