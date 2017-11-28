@@ -1656,7 +1656,7 @@ static struct dst_entry *xfrm_bundle_create(struct xfrm_policy *policy,
 	}
 
 	xfrm_dst_set_child(xdst_prev, dst);
-	xdst0->u.dst.path = dst;
+	xdst0->path = dst;
 
 	err = -ENODEV;
 	dev = dst->dev;
@@ -1928,7 +1928,7 @@ static struct xfrm_dst *xfrm_create_dummy_bundle(struct net *net,
 
 	dst_hold(dst);
 	xfrm_dst_set_child(xdst, dst);
-	dst1->path = dst;
+	xdst->path = dst;
 
 	xfrm_init_path((struct xfrm_dst *)dst1, dst, 0);
 
@@ -2671,9 +2671,7 @@ static unsigned int xfrm_mtu(const struct dst_entry *dst)
 static const void *xfrm_get_dst_nexthop(const struct dst_entry *dst,
 					const void *daddr)
 {
-	const struct dst_entry *path = dst->path;
-
-	for (; dst != path; dst = xfrm_dst_child(dst)) {
+	while (dst->xfrm) {
 		const struct xfrm_state *xfrm = dst->xfrm;
 
 		if (xfrm->props.mode == XFRM_MODE_TRANSPORT)
