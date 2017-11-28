@@ -1656,7 +1656,7 @@ static struct dst_entry *xfrm_bundle_create(struct xfrm_policy *policy,
 	}
 
 	xfrm_dst_set_child(xdst_prev, dst);
-	xdst0->path = dst;
+	xdst0->u.dst.path = dst;
 
 	err = -ENODEV;
 	dev = dst->dev;
@@ -1666,10 +1666,9 @@ static struct dst_entry *xfrm_bundle_create(struct xfrm_policy *policy,
 	xfrm_init_path(xdst0, dst, nfheader_len);
 	xfrm_init_pmtu(&xdst_prev->u.dst);
 
-	for (dst_prev = dst0; dst_prev != dst; dst_prev = xfrm_dst_child(dst_prev)) {
-		struct xfrm_dst *xdst = (struct xfrm_dst *)dst_prev;
-
-		err = xfrm_fill_dst(xdst, dev, fl);
+	for (xdst_prev = xdst0; xdst_prev != (struct xfrm_dst *)dst;
+	     xdst_prev = (struct xfrm_dst *) xfrm_dst_child(&xdst_prev->u.dst)) {
+		err = xfrm_fill_dst(xdst_prev, dev, fl);
 		if (err)
 			goto free_dst;
 
@@ -1929,7 +1928,7 @@ static struct xfrm_dst *xfrm_create_dummy_bundle(struct net *net,
 
 	dst_hold(dst);
 	xfrm_dst_set_child(xdst, dst);
-	xdst->path = dst;
+	dst1->path = dst;
 
 	xfrm_init_path((struct xfrm_dst *)dst1, dst, 0);
 

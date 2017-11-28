@@ -1015,30 +1015,9 @@ static inline struct dst_entry *xfrm_dst_child(const struct dst_entry *dst)
 }
 
 #ifdef CONFIG_XFRM
-	if (dst->xfrm) {
-		const struct xfrm_dst *xdst = (const struct xfrm_dst *) dst;
-
-		return xdst->path;
-	}
-#endif
-	return (struct dst_entry *) dst;
-}
-
-static inline struct dst_entry *xfrm_dst_child(const struct dst_entry *dst)
-{
-#ifdef CONFIG_XFRM
-	if (dst->xfrm) {
-		struct xfrm_dst *xdst = (struct xfrm_dst *) dst;
-		return xdst->child;
-	}
-#endif
-	return NULL;
-}
-
-#ifdef CONFIG_XFRM
 static inline void xfrm_dst_set_child(struct xfrm_dst *xdst, struct dst_entry *child)
 {
-	xdst->child = child;
+	xdst->u.dst.child = child;
 }
 
 static inline void xfrm_dst_destroy(struct xfrm_dst *xdst)
