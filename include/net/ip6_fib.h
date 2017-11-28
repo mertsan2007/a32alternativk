@@ -126,6 +126,7 @@ struct rt6_exception {
 struct rt6_info {
 	struct dst_entry		dst;
 	struct rt6_info __rcu		*rt6_next;
+	struct rt6_info			*from;
 
 struct rt6_exception {
 	struct hlist_node	hlist;
@@ -248,9 +249,13 @@ static inline void fib6_set_expires(struct fib6_info *f6i,
 
 static inline bool fib6_check_expired(const struct fib6_info *f6i)
 {
-	if (f6i->fib6_flags & RTF_EXPIRES)
-		return time_after(jiffies, f6i->expires);
-	return false;
+	struct rt6_info *rt;
+
+	for (rt = rt0; rt && !(rt->rt6i_flags & RTF_EXPIRES); rt = rt->from);
+	if (rt && rt != rt0)
+		rt0->dst.expires = rt->dst.expires;
+	dst_set_expires(&rt0->dst, timeout);
+	rt0->rt6i_flags |= RTF_EXPIRES;
 }
 
 /* Function to safely get fn->sernum for passed in rt
@@ -281,7 +286,8 @@ static inline u32 rt6_get_cookie(const struct rt6_info *rt)
 	struct fib6_info *from;
 	u32 cookie = 0;
 
-	rcu_read_lock();
+	if (rt->from)
+		rt = rt->from;
 
 	from = rcu_dereference(rt->from);
 	if (from)

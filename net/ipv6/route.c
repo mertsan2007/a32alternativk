@@ -184,7 +184,24 @@ static void rt6_uncached_list_flush_dev(struct net *net, struct net_device *dev)
 	}
 }
 
-static inline const void *choose_neigh_daddr(const struct in6_addr *p,
+static u32 *rt6_pcpu_cow_metrics(struct rt6_info *rt)
+{
+	return dst_metrics_write_ptr(&rt->from->dst);
+}
+
+static u32 *ipv6_cow_metrics(struct dst_entry *dst, unsigned long old)
+{
+	struct rt6_info *rt = (struct rt6_info *)dst;
+
+	if (rt->rt6i_flags & RTF_PCPU)
+		return rt6_pcpu_cow_metrics(rt);
+	else if (rt->rt6i_flags & RTF_CACHE)
+		return NULL;
+	else
+		return dst_cow_metrics_generic(dst, old);
+}
+
+static inline const void *choose_neigh_daddr(struct rt6_info *rt,
 					     struct sk_buff *skb,
 					     const void *daddr)
 {
@@ -377,7 +394,7 @@ static void ip6_dst_destroy(struct dst_entry *dst)
 {
 	struct rt6_info *rt = (struct rt6_info *)dst;
 	struct rt6_exception_bucket *bucket;
-	struct dst_entry *from = dst->from;
+	struct rt6_info *from = rt->from;
 	struct inet6_dev *idev;
 
 	dst_destroy_metrics_generic(dst);
@@ -394,11 +411,8 @@ static void ip6_dst_destroy(struct dst_entry *dst)
 		kfree(bucket);
 	}
 
-	rcu_read_lock();
-	from = rcu_dereference(rt->from);
-	rcu_assign_pointer(rt->from, NULL);
-	fib6_info_release(from);
-	rcu_read_unlock();
+	rt->from = NULL;
+	dst_release(&from->dst);
 }
 
 static void ip6_dst_ifdown(struct dst_entry *dst, struct net_device *dev,
@@ -435,9 +449,9 @@ static bool rt6_check_expired(const struct rt6_info *rt)
 	if (rt->rt6i_flags & RTF_EXPIRES) {
 		if (time_after(jiffies, rt->dst.expires))
 			return true;
-	} else if (from) {
+	} else if (rt->from) {
 		return rt->dst.obsolete != DST_OBSOLETE_FORCE_CHK ||
-			fib6_check_expired(from);
+			rt6_check_expired(rt->from);
 	}
 	return false;
 }
@@ -1186,7 +1200,14 @@ static struct rt6_info *ip6_rt_cache_alloc(struct fib6_info *ort,
 	 *	Clone the route.
 	 */
 
-	if (!fib6_info_hold_safe(ort))
+	if (ort->rt6i_flags & (RTF_CACHE | RTF_PCPU))
+		ort = ort->from;
+
+	rcu_read_lock();
+	dev = ip6_rt_get_dev_rcu(ort);
+	rt = __ip6_dst_alloc(dev_net(dev), dev, 0);
+	rcu_read_unlock();
+	if (!rt)
 		return NULL;
 
 	dev = ip6_rt_get_dev_rcu(ort);
@@ -1416,7 +1437,7 @@ static int rt6_insert_exception(struct rt6_info *nrt,
 
 	/* ort can't be a cache or pcpu route */
 	if (ort->rt6i_flags & (RTF_CACHE | RTF_PCPU))
-		ort = (struct rt6_info *)ort->dst.from;
+		ort = ort->from;
 	WARN_ON_ONCE(ort->rt6i_flags & (RTF_CACHE | RTF_PCPU));
 
 	spin_lock_bh(&rt6_exception_lock);
@@ -1555,8 +1576,8 @@ static struct rt6_info *rt6_find_cached_rt(struct rt6_info *rt,
 /* Remove the passed in cached rt from the hash table that contains it */
 int rt6_remove_exception_rt(struct rt6_info *rt)
 {
-	struct rt6_info *from = (struct rt6_info *)rt->dst.from;
 	struct rt6_exception_bucket *bucket;
+	struct rt6_info *from = rt->from;
 	struct in6_addr *src_key = NULL;
 	struct rt6_exception *rt6_ex;
 	int err;
@@ -1600,8 +1621,8 @@ int rt6_remove_exception_rt(struct rt6_info *rt)
  */
 static void rt6_update_exception_stamp_rt(struct rt6_info *rt)
 {
-	struct rt6_info *from = (struct rt6_info *)rt->dst.from;
 	struct rt6_exception_bucket *bucket;
+	struct rt6_info *from = rt->from;
 	struct in6_addr *src_key = NULL;
 	struct rt6_exception *rt6_ex;
 
@@ -2135,7 +2156,14 @@ struct dst_entry *ip6_blackhole_route(struct net *net, struct dst_entry *dst_ori
  *	Destination cache support functions
  */
 
-static bool fib6_check(struct fib6_info *f6i, u32 cookie)
+static void rt6_dst_from_metrics_check(struct rt6_info *rt)
+{
+	if (rt->from &&
+	    dst_metrics_ptr(&rt->dst) != dst_metrics_ptr(&rt->from->dst))
+		dst_init_metrics(&rt->dst, dst_metrics_ptr(&rt->from->dst), true);
+}
+
+static struct dst_entry *rt6_check(struct rt6_info *rt, u32 cookie)
 {
 	u32 rt_cookie = 0;
 
@@ -2171,7 +2199,7 @@ static struct dst_entry *rt6_dst_from_check(struct rt6_info *rt,
 {
 	if (!__rt6_check_expired(rt) &&
 	    rt->dst.obsolete == DST_OBSOLETE_FORCE_CHK &&
-	    fib6_check(from, cookie))
+	    rt6_check(rt->from, cookie))
 		return &rt->dst;
 	else
 		return NULL;
@@ -2194,9 +2222,9 @@ static struct dst_entry *ip6_dst_check(struct dst_entry *dst, u32 cookie)
 
 	from = rcu_dereference(rt->from);
 
-	if (from && (rt->rt6i_flags & RTF_PCPU ||
-	    unlikely(!list_empty(&rt->rt6i_uncached))))
-		dst_ret = rt6_dst_from_check(rt, from, cookie);
+	if (rt->rt6i_flags & RTF_PCPU ||
+	    (unlikely(!list_empty(&rt->rt6i_uncached)) && rt->from))
+		return rt6_dst_from_check(rt, cookie);
 	else
 		dst_ret = rt6_check(rt, from, cookie);
 
@@ -3415,6 +3443,42 @@ static void rt6_do_redirect(struct dst_entry *dst, struct sock *sk, struct sk_bu
 out:
 	fib6_info_release(from);
 	neigh_release(neigh);
+}
+
+/*
+ *	Misc support functions
+ */
+
+static void rt6_set_from(struct rt6_info *rt, struct rt6_info *from)
+{
+	BUG_ON(from->from);
+
+	rt->rt6i_flags &= ~RTF_EXPIRES;
+	dst_hold(&from->dst);
+	rt->from = from;
+	dst_init_metrics(&rt->dst, dst_metrics_ptr(&from->dst), true);
+}
+
+static void ip6_rt_copy_init(struct rt6_info *rt, struct rt6_info *ort)
+{
+	rt->dst.input = ort->dst.input;
+	rt->dst.output = ort->dst.output;
+	rt->rt6i_dst = ort->rt6i_dst;
+	rt->dst.error = ort->dst.error;
+	rt->rt6i_idev = ort->rt6i_idev;
+	if (rt->rt6i_idev)
+		in6_dev_hold(rt->rt6i_idev);
+	rt->dst.lastuse = jiffies;
+	rt->rt6i_gateway = ort->rt6i_gateway;
+	rt->rt6i_flags = ort->rt6i_flags;
+	rt6_set_from(rt, ort);
+	rt->rt6i_metric = ort->rt6i_metric;
+#ifdef CONFIG_IPV6_SUBTREES
+	rt->rt6i_src = ort->rt6i_src;
+#endif
+	rt->rt6i_prefsrc = ort->rt6i_prefsrc;
+	rt->rt6i_table = ort->rt6i_table;
+	rt->dst.lwtstate = lwtstate_get(ort->dst.lwtstate);
 }
 
 #ifdef CONFIG_IPV6_ROUTE_INFO
@@ -4849,6 +4913,14 @@ static int inet6_rtm_getroute(struct sk_buff *in_skb, struct nlmsghdr *nlh,
 		err = rt->dst.error;
 		ip6_rt_put(rt);
 		goto errout;
+	}
+
+	if (fibmatch && rt->from) {
+		struct rt6_info *ort = rt->from;
+
+		dst_hold(&ort->dst);
+		ip6_rt_put(rt);
+		rt = ort;
 	}
 
 	skb = alloc_skb(NLMSG_GOODSIZE, GFP_KERNEL);
