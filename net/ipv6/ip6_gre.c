@@ -705,9 +705,7 @@ static inline int ip6gre_xmit_ipv4(struct sk_buff *skb, struct net_device *dev)
 
 	memset(&(IPCB(skb)->opt), 0, sizeof(IPCB(skb)->opt));
 
-	if (!t->parms.collect_md)
-		prepare_ip6gre_xmit_ipv4(skb, dev, &fl6,
-					 &dsfield, &encap_limit);
+	prepare_ip6gre_xmit_ipv4(skb, dev, &fl6, &dsfield, &encap_limit);
 
 	err = gre_handle_offloads(skb, !!(t->parms.o_flags & TUNNEL_CSUM));
 	if (err)
@@ -739,8 +737,7 @@ static inline int ip6gre_xmit_ipv6(struct sk_buff *skb, struct net_device *dev)
 	if (ipv6_addr_equal(&t->parms.raddr, &ipv6h->saddr))
 		return -1;
 
-	if (!t->parms.collect_md &&
-	    prepare_ip6gre_xmit_ipv6(skb, dev, &fl6, &dsfield, &encap_limit))
+	if (prepare_ip6gre_xmit_ipv6(skb, dev, &fl6, &dsfield, &encap_limit))
 		return -1;
 
 	if (gre_handle_offloads(skb, !!(t->parms.o_flags & TUNNEL_CSUM)))
