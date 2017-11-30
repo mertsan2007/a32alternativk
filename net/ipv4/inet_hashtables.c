@@ -308,6 +308,7 @@ struct sock *__inet_lookup_listener(struct net *net,
 	bool exact_dif = inet_exact_dif_match(net, skb);
 	struct inet_listen_hashbucket *ilb2;
 	struct sock *sk, *result = NULL;
+	int score, hiscore = 0;
 	u32 phash = 0;
 
 	sk_for_each_rcu(sk, &ilb->head) {
@@ -320,7 +321,7 @@ struct sock *__inet_lookup_listener(struct net *net,
 				result = reuseport_select_sock(sk, phash,
 							       skb, doff);
 				if (result)
-					goto done;
+					return result;
 			}
 			result = sk;
 			hiscore = score;

@@ -281,15 +281,9 @@ struct sock *reuseport_select_sock(struct sock *sk,
 		/* paired with smp_wmb() in reuseport_add_sock() */
 		smp_rmb();
 
-		if (!prog || !skb)
-			goto select_by_hash;
+		if (prog && skb)
+			sk2 = run_bpf(reuse, socks, prog, skb, hdr_len);
 
-		if (prog->type == BPF_PROG_TYPE_SK_REUSEPORT)
-			sk2 = bpf_run_sk_reuseport(reuse, sk, prog, skb, hash);
-		else
-			sk2 = run_bpf_filter(reuse, socks, prog, skb, hdr_len);
-
-select_by_hash:
 		/* no bpf or invalid bpf result: fall back to hash usage */
 		if (!sk2)
 			sk2 = reuse->socks[reciprocal_scale(hash, socks)];
