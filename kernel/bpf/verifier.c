@@ -4563,43 +4563,25 @@ static int check_cond_jmp_op(struct bpf_verifier_env *env,
 	dst_reg = &regs[insn->dst_reg];
 	is_jmp32 = BPF_CLASS(insn->code) == BPF_JMP32;
 
-	if (BPF_SRC(insn->code) == BPF_K)
-		pred = is_branch_taken(dst_reg, insn->imm,
-				       opcode, is_jmp32);
-	else if (src_reg->type == SCALAR_VALUE &&
-		 tnum_is_const(src_reg->var_off))
-		pred = is_branch_taken(dst_reg, src_reg->var_off.value,
-				       opcode, is_jmp32);
-	if (pred >= 0) {
-		err = mark_chain_precision(env, insn->dst_reg);
-		if (BPF_SRC(insn->code) == BPF_X && !err)
-			err = mark_chain_precision(env, insn->src_reg);
-		if (err)
-			return err;
-	}
-
-	if (pred == 1) {
-		/* Only follow the goto, ignore fall-through. If needed, push
-		 * the fall-through branch for simulation under speculative
-		 * execution.
-		 */
-		if (!env->allow_ptr_leaks &&
-		    !sanitize_speculative_path(env, insn, *insn_idx + 1,
-					       *insn_idx))
-			return -EFAULT;
-		*insn_idx += insn->off;
-		return 0;
-	} else if (pred == 0) {
-		/* Only follow the fall-through branch, since that's where the
-		 * program will go. If needed, push the goto branch for
-		 * simulation under speculative execution.
-		 */
-		if (!env->allow_ptr_leaks &&
-		    !sanitize_speculative_path(env, insn,
-					       *insn_idx + insn->off + 1,
-					       *insn_idx))
-			return -EFAULT;
-		return 0;
+	/* detect if R == 0 where R was initialized to zero earlier */
+	if (BPF_SRC(insn->code) == BPF_K &&
+	    (opcode == BPF_JEQ || opcode == BPF_JNE) &&
+	    dst_reg->type == SCALAR_VALUE &&
+	    tnum_is_const(dst_reg->var_off)) {
+		if ((opcode == BPF_JEQ && dst_reg->var_off.value == insn->imm) ||
+		    (opcode == BPF_JNE && dst_reg->var_off.value != insn->imm)) {
+			/* if (imm == imm) goto pc+off;
+			 * only follow the goto, ignore fall-through
+			 */
+			*insn_idx += insn->off;
+			return 0;
+		} else {
+			/* if (imm != imm) goto pc+off;
+			 * only follow fall-through branch, since
+			 * that's where the program will go
+			 */
+			return 0;
+		}
 	}
 
 	other_branch = push_stack(env, *insn_idx + insn->off + 1, *insn_idx,
