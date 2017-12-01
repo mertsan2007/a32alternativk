@@ -309,8 +309,39 @@ struct sock *__inet_lookup_listener(struct net *net,
 	struct inet_listen_hashbucket *ilb2;
 	struct sock *sk, *result = NULL;
 	int score, hiscore = 0;
+	unsigned int hash2;
 	u32 phash = 0;
 
+	if (ilb->count <= 10 || !hashinfo->lhash2)
+		goto port_lookup;
+
+	/* Too many sk in the ilb bucket (which is hashed by port alone).
+	 * Try lhash2 (which is hashed by port and addr) instead.
+	 */
+
+	hash2 = ipv4_portaddr_hash(net, daddr, hnum);
+	ilb2 = inet_lhash2_bucket(hashinfo, hash2);
+	if (ilb2->count > ilb->count)
+		goto port_lookup;
+
+	result = inet_lhash2_lookup(net, ilb2, skb, doff,
+				    saddr, sport, daddr, hnum,
+				    dif, sdif);
+	if (result)
+		return result;
+
+	/* Lookup lhash2 with INADDR_ANY */
+
+	hash2 = ipv4_portaddr_hash(net, htonl(INADDR_ANY), hnum);
+	ilb2 = inet_lhash2_bucket(hashinfo, hash2);
+	if (ilb2->count > ilb->count)
+		goto port_lookup;
+
+	return inet_lhash2_lookup(net, ilb2, skb, doff,
+				  saddr, sport, daddr, hnum,
+				  dif, sdif);
+
+port_lookup:
 	sk_for_each_rcu(sk, &ilb->head) {
 		score = compute_score(sk, net, hnum, daddr,
 				      dif, sdif, exact_dif);
@@ -570,6 +601,7 @@ int __inet_hash(struct sock *sk, struct sock *osk)
 		hlist_add_tail_rcu(&sk->sk_node, &ilb->head);
 	else
 		hlist_add_head_rcu(&sk->sk_node, &ilb->head);
+	inet_hash2(hashinfo, sk);
 	ilb->count++;
 	sock_set_flag(sk, SOCK_RCU_FREE);
 	sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
@@ -617,15 +649,15 @@ void inet_unhash(struct sock *sk)
 
 	if (rcu_access_pointer(sk->sk_reuseport_cb))
 		reuseport_detach_sock(sk);
-	if (listener)
-		done = __sk_del_node_init(sk);
-	else
-		done = __sk_nulls_del_node_init_rcu(sk);
-	if (done) {
-		if (listener)
-			ilb->count--;
-		sock_prot_inuse_add(sock_net(sk), sk->sk_prot, -1);
+	if (listener) {
+		inet_unhash2(hashinfo, sk);
+		 __sk_del_node_init(sk);
+		 ilb->count--;
+	} else {
+		__sk_nulls_del_node_init_rcu(sk);
 	}
+	sock_prot_inuse_add(sock_net(sk), sk->sk_prot, -1);
+unlock:
 	spin_unlock_bh(lock);
 }
 EXPORT_SYMBOL_GPL(inet_unhash);

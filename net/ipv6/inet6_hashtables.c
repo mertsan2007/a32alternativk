@@ -172,8 +172,39 @@ struct sock *inet6_lookup_listener(struct net *net,
 	struct inet_listen_hashbucket *ilb2;
 	struct sock *sk, *result = NULL;
 	int score, hiscore = 0;
+	unsigned int hash2;
 	u32 phash = 0;
 
+	if (ilb->count <= 10 || !hashinfo->lhash2)
+		goto port_lookup;
+
+	/* Too many sk in the ilb bucket (which is hashed by port alone).
+	 * Try lhash2 (which is hashed by port and addr) instead.
+	 */
+
+	hash2 = ipv6_portaddr_hash(net, daddr, hnum);
+	ilb2 = inet_lhash2_bucket(hashinfo, hash2);
+	if (ilb2->count > ilb->count)
+		goto port_lookup;
+
+	result = inet6_lhash2_lookup(net, ilb2, skb, doff,
+				     saddr, sport, daddr, hnum,
+				     dif, sdif);
+	if (result)
+		return result;
+
+	/* Lookup lhash2 with in6addr_any */
+
+	hash2 = ipv6_portaddr_hash(net, &in6addr_any, hnum);
+	ilb2 = inet_lhash2_bucket(hashinfo, hash2);
+	if (ilb2->count > ilb->count)
+		goto port_lookup;
+
+	return inet6_lhash2_lookup(net, ilb2, skb, doff,
+				   saddr, sport, daddr, hnum,
+				   dif, sdif);
+
+port_lookup:
 	sk_for_each(sk, &ilb->head) {
 		score = compute_score(sk, net, hnum, daddr, dif, sdif, exact_dif);
 		if (score > hiscore) {
