@@ -56,6 +56,7 @@
 #include <net/ip6_tunnel.h>
 #include <net/gre.h>
 #include <net/erspan.h>
+#include <net/dst_metadata.h>
 
 
 static bool log_ecn_error = true;
@@ -526,70 +527,6 @@ static int ip6erspan_rcv(struct sk_buff *skb, int gre_hdr_len,
 					   false, false) < 0)
 			return PACKET_REJECT;
 
-		if (tunnel->parms.collect_md) {
-			struct metadata_dst *tun_dst;
-			struct ip_tunnel_info *info;
-			struct erspan_metadata *md;
-			__be64 tun_id;
-			__be16 flags;
-
-			tpi->flags |= TUNNEL_KEY;
-			flags = tpi->flags;
-			tun_id = key32_to_tunnel_id(tpi->key);
-
-			tun_dst = ipv6_tun_rx_dst(skb, flags, tun_id,
-						  sizeof(*md));
-			if (!tun_dst)
-				return PACKET_REJECT;
-
-			info = &tun_dst->u.tun_info;
-			md = ip_tunnel_info_opts(info);
-			if (!md)
-				return PACKET_REJECT;
-
-			md->index = index;
-			info->key.tun_flags |= TUNNEL_ERSPAN_OPT;
-			info->options_len = sizeof(*md);
-
-			ip6_tnl_rcv(tunnel, skb, tpi, tun_dst, log_ecn_error);
-
-		} else {
-			tunnel->parms.index = ntohl(index);
-			ip6_tnl_rcv(tunnel, skb, tpi, NULL, log_ecn_error);
-		}
-
-		return PACKET_RCVD;
-	}
-
-	return PACKET_REJECT;
-}
-
-static int ip6erspan_rcv(struct sk_buff *skb, int gre_hdr_len,
-			 struct tnl_ptk_info *tpi)
-{
-	const struct ipv6hdr *ipv6h;
-	struct erspanhdr *ershdr;
-	struct ip6_tnl *tunnel;
-	__be32 index;
-
-	ipv6h = ipv6_hdr(skb);
-	ershdr = (struct erspanhdr *)skb->data;
-
-	if (unlikely(!pskb_may_pull(skb, sizeof(*ershdr))))
-		return PACKET_REJECT;
-
-	tpi->key = cpu_to_be32(ntohs(ershdr->session_id) & ID_MASK);
-	index = ershdr->md.index;
-
-	tunnel = ip6gre_tunnel_lookup(skb->dev,
-				      &ipv6h->saddr, &ipv6h->daddr, tpi->key,
-				      tpi->proto);
-	if (tunnel) {
-		if (__iptunnel_pull_header(skb, sizeof(*ershdr),
-					   htons(ETH_P_TEB),
-					   false, false) < 0)
-			return PACKET_REJECT;
-
 		tunnel->parms.index = ntohl(index);
 		ip6_tnl_rcv(tunnel, skb, tpi, NULL, log_ecn_error);
 
@@ -724,6 +661,38 @@ static netdev_tx_t __gre6_xmit(struct sk_buff *skb,
 	/* Push GRE header. */
 	protocol = (dev->type == ARPHRD_ETHER) ? htons(ETH_P_TEB) : proto;
 
+	if (tunnel->parms.collect_md) {
+		struct ip_tunnel_info *tun_info;
+		const struct ip_tunnel_key *key;
+		__be16 flags;
+
+		tun_info = skb_tunnel_info(skb);
+		if (unlikely(!tun_info ||
+			     !(tun_info->mode & IP_TUNNEL_INFO_TX) ||
+			     ip_tunnel_info_af(tun_info) != AF_INET6))
+			return -EINVAL;
+
+		key = &tun_info->key;
+		memset(fl6, 0, sizeof(*fl6));
+		fl6->flowi6_proto = IPPROTO_GRE;
+		fl6->daddr = key->u.ipv6.dst;
+		fl6->flowlabel = key->label;
+		fl6->flowi6_uid = sock_net_uid(dev_net(dev), NULL);
+
+		dsfield = key->tos;
+		flags = key->tun_flags & (TUNNEL_CSUM | TUNNEL_KEY);
+		tunnel->tun_hlen = gre_calc_hlen(flags);
+
+		gre_build_header(skb, tunnel->tun_hlen,
+				 flags, protocol,
+				 tunnel_id_to_key32(tun_info->key.tun_id), 0);
+
+	} else {
+		gre_build_header(skb, tunnel->tun_hlen, tunnel->parms.o_flags,
+				 protocol, tunnel->parms.o_key,
+				 htonl(tunnel->o_seqno));
+	}
+
 	return ip6_tnl_xmit(skb, dev, dsfield, fl6, encap_limit, pmtu,
 			    NEXTHDR_GRE);
 }
@@ -739,7 +708,9 @@ static inline int ip6gre_xmit_ipv4(struct sk_buff *skb, struct net_device *dev)
 
 	memset(&(IPCB(skb)->opt), 0, sizeof(IPCB(skb)->opt));
 
-	prepare_ip6gre_xmit_ipv4(skb, dev, &fl6, &dsfield, &encap_limit);
+	if (!t->parms.collect_md)
+		prepare_ip6gre_xmit_ipv4(skb, dev, &fl6,
+					 &dsfield, &encap_limit);
 
 	err = gre_handle_offloads(skb, !!(t->parms.o_flags & TUNNEL_CSUM));
 	if (err)
@@ -771,7 +742,8 @@ static inline int ip6gre_xmit_ipv6(struct sk_buff *skb, struct net_device *dev)
 	if (ipv6_addr_equal(&t->parms.raddr, &ipv6h->saddr))
 		return -1;
 
-	if (prepare_ip6gre_xmit_ipv6(skb, dev, &fl6, &dsfield, &encap_limit))
+	if (!t->parms.collect_md &&
+	    prepare_ip6gre_xmit_ipv6(skb, dev, &fl6, &dsfield, &encap_limit))
 		return -1;
 
 	if (gre_handle_offloads(skb, !!(t->parms.o_flags & TUNNEL_CSUM)))
@@ -1589,6 +1561,9 @@ static void ip6gre_netlink_parms(struct nlattr *data[],
 
 	if (data[IFLA_GRE_ERSPAN_INDEX])
 		parms->index = nla_get_u32(data[IFLA_GRE_ERSPAN_INDEX]);
+
+	if (data[IFLA_GRE_COLLECT_METADATA])
+		parms->collect_md = true;
 }
 
 static int ip6gre_tap_init(struct net_device *dev)
