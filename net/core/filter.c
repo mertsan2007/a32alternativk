@@ -3608,6 +3608,9 @@ BPF_CALL_4(bpf_skb_set_tunnel_key, struct sk_buff *, skb,
 		info->key.u.ipv4.dst = cpu_to_be32(from->remote_ipv4);
 	}
 
+	if (flags & BPF_F_ZERO_CSUM_TX)
+		info->key.tun_flags &= ~TUNNEL_CSUM;
+
 	return 0;
 }
 
