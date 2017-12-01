@@ -5489,106 +5489,31 @@ static u32 sock_ops_convert_ctx_access(enum bpf_access_type type,
 					       is_fullsock));
 		break;
 
-	case offsetof(struct bpf_sock_ops, state):
-		BUILD_BUG_ON(FIELD_SIZEOF(struct sock_common, skc_state) != 1);
+/* Helper macro for adding read access to tcp_sock fields. */
+#define SOCK_OPS_GET_TCP32(FIELD_NAME)					      \
+	do {								      \
+		BUILD_BUG_ON(FIELD_SIZEOF(struct tcp_sock, FIELD_NAME) != 4); \
+		*insn++ = BPF_LDX_MEM(BPF_FIELD_SIZEOF(			      \
+						struct bpf_sock_ops_kern,     \
+						is_fullsock),		      \
+				      si->dst_reg, si->src_reg,		      \
+				      offsetof(struct bpf_sock_ops_kern,      \
+					       is_fullsock));		      \
+		*insn++ = BPF_JMP_IMM(BPF_JEQ, si->dst_reg, 0, 2);	      \
+		*insn++ = BPF_LDX_MEM(BPF_FIELD_SIZEOF(			      \
+						struct bpf_sock_ops_kern, sk),\
+				      si->dst_reg, si->src_reg,		      \
+				      offsetof(struct bpf_sock_ops_kern, sk));\
+		*insn++ = BPF_LDX_MEM(BPF_W, si->dst_reg, si->dst_reg,        \
+				      offsetof(struct tcp_sock, FIELD_NAME)); \
+	} while (0)
 
-		*insn++ = BPF_LDX_MEM(BPF_FIELD_SIZEOF(
-						struct bpf_sock_ops_kern, sk),
-				      si->dst_reg, si->src_reg,
-				      offsetof(struct bpf_sock_ops_kern, sk));
-		*insn++ = BPF_LDX_MEM(BPF_B, si->dst_reg, si->dst_reg,
-				      offsetof(struct sock_common, skc_state));
-		break;
-
-	case offsetof(struct bpf_sock_ops, rtt_min):
-		BUILD_BUG_ON(FIELD_SIZEOF(struct tcp_sock, rtt_min) !=
-			     sizeof(struct minmax));
-		BUILD_BUG_ON(sizeof(struct minmax) <
-			     sizeof(struct minmax_sample));
-
-		*insn++ = BPF_LDX_MEM(BPF_FIELD_SIZEOF(
-						struct bpf_sock_ops_kern, sk),
-				      si->dst_reg, si->src_reg,
-				      offsetof(struct bpf_sock_ops_kern, sk));
-		*insn++ = BPF_LDX_MEM(BPF_W, si->dst_reg, si->dst_reg,
-				      offsetof(struct tcp_sock, rtt_min) +
-				      FIELD_SIZEOF(struct minmax_sample, t));
-		break;
-
-	case offsetof(struct bpf_sock_ops, bpf_sock_ops_cb_flags):
-		SOCK_OPS_GET_FIELD(bpf_sock_ops_cb_flags, bpf_sock_ops_cb_flags,
-				   struct tcp_sock);
-		break;
-
-	case offsetof(struct bpf_sock_ops, sk_txhash):
-		SOCK_OPS_GET_OR_SET_FIELD(sk_txhash, sk_txhash,
-					  struct sock, type);
-		break;
 	case offsetof(struct bpf_sock_ops, snd_cwnd):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(snd_cwnd);
+		SOCK_OPS_GET_TCP32(snd_cwnd);
 		break;
+
 	case offsetof(struct bpf_sock_ops, srtt_us):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(srtt_us);
-		break;
-	case offsetof(struct bpf_sock_ops, snd_ssthresh):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(snd_ssthresh);
-		break;
-	case offsetof(struct bpf_sock_ops, rcv_nxt):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(rcv_nxt);
-		break;
-	case offsetof(struct bpf_sock_ops, snd_nxt):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(snd_nxt);
-		break;
-	case offsetof(struct bpf_sock_ops, snd_una):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(snd_una);
-		break;
-	case offsetof(struct bpf_sock_ops, mss_cache):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(mss_cache);
-		break;
-	case offsetof(struct bpf_sock_ops, ecn_flags):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(ecn_flags);
-		break;
-	case offsetof(struct bpf_sock_ops, rate_delivered):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(rate_delivered);
-		break;
-	case offsetof(struct bpf_sock_ops, rate_interval_us):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(rate_interval_us);
-		break;
-	case offsetof(struct bpf_sock_ops, packets_out):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(packets_out);
-		break;
-	case offsetof(struct bpf_sock_ops, retrans_out):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(retrans_out);
-		break;
-	case offsetof(struct bpf_sock_ops, total_retrans):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(total_retrans);
-		break;
-	case offsetof(struct bpf_sock_ops, segs_in):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(segs_in);
-		break;
-	case offsetof(struct bpf_sock_ops, data_segs_in):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(data_segs_in);
-		break;
-	case offsetof(struct bpf_sock_ops, segs_out):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(segs_out);
-		break;
-	case offsetof(struct bpf_sock_ops, data_segs_out):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(data_segs_out);
-		break;
-	case offsetof(struct bpf_sock_ops, lost_out):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(lost_out);
-		break;
-	case offsetof(struct bpf_sock_ops, sacked_out):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(sacked_out);
-		break;
-	case offsetof(struct bpf_sock_ops, bytes_received):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(bytes_received);
-		break;
-	case offsetof(struct bpf_sock_ops, bytes_acked):
-		SOCK_OPS_GET_TCP_SOCK_FIELD(bytes_acked);
-		break;
-	case offsetof(struct bpf_sock_ops, sk):
-		SOCK_OPS_GET_SK();
+		SOCK_OPS_GET_TCP32(srtt_us);
 		break;
 	}
 	return insn - insn_buf;
