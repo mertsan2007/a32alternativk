@@ -1327,6 +1327,7 @@ static int rtnl_fill_link_ifmap(struct sk_buff *skb, struct net_device *dev)
 static u32 rtnl_xdp_prog_skb(struct net_device *dev)
 {
 	const struct bpf_prog *generic_xdp_prog;
+	struct netdev_bpf xdp;
 
 	ASSERT_RTNL();
 
@@ -1338,7 +1339,10 @@ static u32 rtnl_xdp_prog_skb(struct net_device *dev)
 	if (!ops->ndo_bpf)
 		return XDP_ATTACHED_NONE;
 
-	return __dev_xdp_attached(dev, ops->ndo_bpf, prog_id);
+	__dev_xdp_query(dev, ops->ndo_bpf, &xdp);
+	*prog_id = xdp.prog_id;
+
+	return xdp.prog_attached;
 }
 
 static int rtnl_xdp_fill(struct sk_buff *skb, struct net_device *dev)
