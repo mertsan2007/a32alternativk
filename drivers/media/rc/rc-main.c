@@ -65,11 +65,11 @@ static const struct {
 	[RC_PROTO_RC6_MCE] = { .name = "rc-6-mce",
 		.scancode_bits = 0xffff7fff, .repeat_period = 250 },
 	[RC_PROTO_SHARP] = { .name = "sharp",
-		.scancode_bits = 0x1fff, .repeat_period = 125 },
-	[RC_PROTO_XMP] = { .name = "xmp", .repeat_period = 125 },
-	[RC_PROTO_CEC] = { .name = "cec", .repeat_period = 0 },
+		.scancode_bits = 0x1fff, .repeat_period = 250 },
+	[RC_PROTO_XMP] = { .name = "xmp", .repeat_period = 250 },
+	[RC_PROTO_CEC] = { .name = "cec", .repeat_period = 550 },
 	[RC_PROTO_IMON] = { .name = "imon",
-		.scancode_bits = 0x7fffffff, .repeat_period = 114 },
+		.scancode_bits = 0x7fffffff, .repeat_period = 250 },
 };
 
 /* Used to keep track of known keymaps */
