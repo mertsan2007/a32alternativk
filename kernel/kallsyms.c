@@ -12,7 +12,6 @@
  *      compression (see scripts/kallsyms.c for a more complete description)
  */
 #include <linux/kallsyms.h>
-#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/seq_file.h>
 #include <linux/fs.h>
@@ -20,18 +19,10 @@
 #include <linux/err.h>
 #include <linux/proc_fs.h>
 #include <linux/sched.h>	/* for cond_resched */
-#include <linux/mm.h>
 #include <linux/ctype.h>
 #include <linux/slab.h>
 #include <linux/filter.h>
 #include <linux/compiler.h>
-#include <asm/sections.h>
-
-#ifdef CONFIG_KALLSYMS_ALL
-#define all_var 1
-#else
-#define all_var 0
-#endif
 
 /*
  * These will be re-linked against their real values
