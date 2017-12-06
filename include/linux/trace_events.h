@@ -553,17 +553,6 @@ extern void perf_trace_del(struct perf_event *event, int flags);
 #ifdef CONFIG_KPROBE_EVENTS
 extern int  perf_kprobe_init(struct perf_event *event, bool is_retprobe);
 extern void perf_kprobe_destroy(struct perf_event *event);
-extern int bpf_get_kprobe_info(const struct perf_event *event,
-			       u32 *fd_type, const char **symbol,
-			       u64 *probe_offset, u64 *probe_addr,
-			       bool perf_type_tracepoint);
-#endif
-#ifdef CONFIG_UPROBE_EVENTS
-extern int  perf_uprobe_init(struct perf_event *event, bool is_retprobe);
-extern void perf_uprobe_destroy(struct perf_event *event);
-extern int bpf_get_uprobe_info(const struct perf_event *event,
-			       u32 *fd_type, const char **filename,
-			       u64 *probe_offset, bool perf_type_tracepoint);
 #endif
 extern int  ftrace_profile_set_filter(struct perf_event *event, int event_id,
 				     char *filter_str);
