@@ -2,7 +2,7 @@
 // SPI driven IR LED device driver
 //
 // Copyright (c) 2016 Samsung Electronics Co., Ltd.
-// Copyright (c) Andi Shyti <andi@etezian.org>
+// Copyright (c) Andi Shyti <andi.shyti@samsung.com>
 
 #include <linux/delay.h>
 #include <linux/fs.h>
