@@ -308,7 +308,6 @@ typedef unsigned long (*bpf_ctx_copy_t)(void *dst, const void *src,
 
 u64 bpf_event_output(struct bpf_map *map, u64 flags, void *meta, u64 meta_size,
 		     void *ctx, u64 ctx_size, bpf_ctx_copy_t ctx_copy);
-int bpf_event_query_prog_array(struct perf_event *event, void __user *info);
 
 /* an array of programs to be executed under rcu_lock.
  *
