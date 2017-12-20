@@ -1034,10 +1034,16 @@ static void __bpf_prog_put_noref(struct bpf_prog *prog, bool deferred)
 static void __bpf_prog_put(struct bpf_prog *prog, bool do_idr_lock)
 {
 	if (atomic_dec_and_test(&prog->aux->refcnt)) {
-		perf_event_bpf_event(prog, PERF_BPF_EVENT_PROG_UNLOAD, 0);
+		int i;
+
+		trace_bpf_prog_put_rcu(prog);
 		/* bpf_prog_free_id() must be called first */
 		bpf_prog_free_id(prog, do_idr_lock);
+
+		for (i = 0; i < prog->aux->func_cnt; i++)
+			bpf_prog_kallsyms_del(prog->aux->func[i]);
 		bpf_prog_kallsyms_del(prog);
+
 		call_rcu(&prog->aux->rcu, __bpf_prog_put_rcu);
 	}
 }
