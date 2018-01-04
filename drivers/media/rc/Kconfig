@@ -26,7 +26,7 @@ config LIRC
 	   IR transmitting (aka "blasting") and for the lirc daemon.
 
 menuconfig RC_DECODERS
-        bool "Remote controller decoders"
+	bool "Remote controller decoders"
 	depends on RC_CORE
 
 if RC_DECODERS
