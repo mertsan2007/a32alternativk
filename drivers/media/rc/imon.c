@@ -1549,23 +1549,7 @@ static int imon_parse_press_type(struct imon_context *ictx,
 /*
  * Process the incoming packet
  */
-/*
- * Convert bit count to time duration (in us) and submit
- * the value to lirc_dev.
- */
-static void submit_data(struct imon_context *context)
-{
-	DEFINE_IR_RAW_EVENT(ev);
-
-	ev.pulse = context->rx.prev_bit;
-	ev.duration = US_TO_NS(context->rx.count * BIT_DURATION);
-	ir_raw_event_store_with_filter(context->rdev, &ev);
-}
-
-/*
- * Process the incoming packet
- */
-static void imon_incoming_ir_raw(struct imon_context *context,
+static void imon_incoming_packet(struct imon_context *ictx,
 				 struct urb *urb, int intf)
 {
 	int len = urb->actual_length;
@@ -1965,7 +1949,7 @@ static struct rc_dev *imon_init_rdev(struct imon_context *ictx)
 
 	rdev->priv = ictx;
 	/* iMON PAD or MCE */
-	rdev->allowed_protocols = RC_PROTO_BIT_IMON | RC_PROTO_BIT_RC6_MCE;
+	rdev->allowed_protocols = RC_PROTO_BIT_OTHER | RC_PROTO_BIT_RC6_MCE;
 	rdev->change_protocol = imon_ir_change_protocol;
 	rdev->driver_name = MOD_NAME;
 
