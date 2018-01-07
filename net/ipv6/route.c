@@ -497,7 +497,7 @@ struct fib6_info *fib6_multipath_select(const struct net *net,
 			if (route_choosen == 0) {
 				struct inet6_dev *idev = sibling->rt6i_idev;
 
-				if (!netif_carrier_ok(sibling->dst.dev) &&
+				if (sibling->rt6i_nh_flags & RTNH_F_LINKDOWN &&
 				    idev->cnf.ignore_routes_with_linkdown)
 					break;
 				if (rt6_score_route(sibling, oif, strict) < 0)
@@ -706,12 +706,10 @@ static struct fib6_info *find_match(struct fib6_info *rt, int oif, int strict,
 {
 	int m;
 	bool match_do_rr = false;
+	struct inet6_dev *idev = rt->rt6i_idev;
 
-	if (rt->fib6_nh.nh_flags & RTNH_F_DEAD)
-		goto out;
-
-	if (fib6_ignore_linkdown(rt) &&
-	    rt->fib6_nh.nh_flags & RTNH_F_LINKDOWN &&
+	if (idev->cnf.ignore_routes_with_linkdown &&
+	    rt->rt6i_nh_flags & RTNH_F_LINKDOWN &&
 	    !(strict & RT6_LOOKUP_F_IGNORE_LINKSTATE))
 		goto out;
 
