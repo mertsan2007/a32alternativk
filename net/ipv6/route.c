@@ -4462,6 +4462,9 @@ static size_t rt6_nlmsg_size(struct fib6_info *rt)
 static int rt6_nexthop_info(struct sk_buff *skb, struct fib6_info *rt,
 			    unsigned int *flags, bool skip_oif)
 {
+	if (rt->rt6i_nh_flags & RTNH_F_DEAD)
+		*flags |= RTNH_F_DEAD;
+
 	if (rt->rt6i_nh_flags & RTNH_F_LINKDOWN) {
 		*flags |= RTNH_F_LINKDOWN;
 
