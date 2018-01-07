@@ -1982,10 +1982,10 @@ static int fib6_clean_node(struct fib6_walker *w)
 			}
 			return 0;
 		} else if (res == -2) {
-			if (WARN_ON(!rt->fib6_nsiblings))
+			if (WARN_ON(!rt->rt6i_nsiblings))
 				continue;
-			rt = list_last_entry(&rt->fib6_siblings,
-					     struct fib6_info, fib6_siblings);
+			rt = list_last_entry(&rt->rt6i_siblings,
+					     struct rt6_info, rt6i_siblings);
 			continue;
 		}
 		WARN_ON(res != 0);
