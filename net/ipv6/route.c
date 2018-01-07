@@ -3125,12 +3125,12 @@ static struct fib6_info *ip6_route_info_create(struct fib6_config *cfg,
 	rt->fib6_flags = cfg->fc_flags;
 
 install_route:
-	if (!(rt->fib6_flags & (RTF_LOCAL | RTF_ANYCAST)) &&
+	if (!(rt->rt6i_flags & (RTF_LOCAL | RTF_ANYCAST)) &&
 	    !netif_carrier_ok(dev))
-		rt->fib6_nh.nh_flags |= RTNH_F_LINKDOWN;
-	rt->fib6_nh.nh_flags |= (cfg->fc_flags & RTNH_F_ONLINK);
-	rt->fib6_nh.nh_dev = dev;
-	rt->fib6_table = table;
+		rt->rt6i_nh_flags |= RTNH_F_LINKDOWN;
+	rt->dst.dev = dev;
+	rt->rt6i_idev = idev;
+	rt->rt6i_table = table;
 
 	cfg->fc_nlinfo.nl_net = dev_net(dev);
 
