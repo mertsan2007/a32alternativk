@@ -723,6 +723,11 @@ static struct fib6_node *fib6_add_1(struct net *net,
 			if (!(fn->fn_flags & RTN_RTINFO)) {
 				RCU_INIT_POINTER(fn->leaf, NULL);
 				rt6_release(leaf);
+			/* remove null_entry in the root node */
+			} else if (fn->fn_flags & RTN_TL_ROOT &&
+				   rcu_access_pointer(fn->leaf) ==
+				   net->ipv6.ip6_null_entry) {
+				RCU_INIT_POINTER(fn->leaf, NULL);
 			}
 
 			return fn;
@@ -1333,7 +1338,10 @@ failure:
 	 * 2. fn is the root node in the table and we fail to add the first
 	 * default route to it.
 	 */
-	if (fn && !(fn->fn_flags & (RTN_RTINFO|RTN_ROOT)))
+	if (fn &&
+	    (!(fn->fn_flags & (RTN_RTINFO|RTN_ROOT)) ||
+	     (fn->fn_flags & RTN_TL_ROOT &&
+	      !rcu_access_pointer(fn->leaf))))
 		fib6_repair_tree(info->nl_net, table, fn);
 	/* Always release dst as dst->__refcnt is guaranteed
 	 * to be taken before entering this function
@@ -1587,7 +1595,7 @@ static struct fib6_node *fib6_repair_tree(struct net *net,
 
 	/* Set fn->leaf to null_entry for root node. */
 	if (fn->fn_flags & RTN_TL_ROOT) {
-		rcu_assign_pointer(fn->leaf, net->ipv6.fib6_null_entry);
+		rcu_assign_pointer(fn->leaf, net->ipv6.ip6_null_entry);
 		return fn;
 	}
 
@@ -1746,10 +1754,15 @@ static void fib6_del_route(struct fib6_table *table, struct fib6_node *fn,
 	}
 	read_unlock(&net->ipv6.fib6_walker_lock);
 
-	/* If it was last route, expunge its radix tree node */
+	/* If it was last route, call fib6_repair_tree() to:
+	 * 1. For root node, put back null_entry as how the table was created.
+	 * 2. For other nodes, expunge its radix tree node.
+	 */
 	if (!rcu_access_pointer(fn->leaf)) {
-		fn->fn_flags &= ~RTN_RTINFO;
-		net->ipv6.rt6_stats->fib_route_nodes--;
+		if (!(fn->fn_flags & RTN_TL_ROOT)) {
+			fn->fn_flags &= ~RTN_RTINFO;
+			net->ipv6.rt6_stats->fib_route_nodes--;
+		}
 		fn = fib6_repair_tree(net, table, fn);
 	}
 
