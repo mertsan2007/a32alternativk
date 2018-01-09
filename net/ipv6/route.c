@@ -2034,54 +2034,13 @@ u32 rt6_multipath_hash(const struct net *net, const struct flowi6 *fl6,
 	struct flow_keys hash_keys;
 	u32 mhash;
 
-	switch (net->ipv6.sysctl.multipath_hash_policy) {
-	case 0:
-		memset(&hash_keys, 0, sizeof(hash_keys));
-		hash_keys.control.addr_type = FLOW_DISSECTOR_KEY_IPV6_ADDRS;
-		if (skb) {
-			ip6_multipath_l3_keys(skb, &hash_keys, flkeys);
-		} else {
-			hash_keys.addrs.v6addrs.src = fl6->saddr;
-			hash_keys.addrs.v6addrs.dst = fl6->daddr;
-			hash_keys.tags.flow_label = (__force u32)fl6->flowlabel;
-			hash_keys.basic.ip_proto = fl6->flowi6_proto;
-		}
-		break;
-	case 1:
-		if (skb) {
-			unsigned int flag = FLOW_DISSECTOR_F_STOP_AT_ENCAP;
-			struct flow_keys keys;
-
-			/* short-circuit if we already have L4 hash present */
-			if (skb->l4_hash)
-				return skb_get_hash_raw(skb) >> 1;
-
-			memset(&hash_keys, 0, sizeof(hash_keys));
-
-                        if (!flkeys) {
-				skb_flow_dissect_flow_keys(skb, &keys, flag);
-				flkeys = &keys;
-			}
-			hash_keys.control.addr_type = FLOW_DISSECTOR_KEY_IPV6_ADDRS;
-			hash_keys.addrs.v6addrs.src = flkeys->addrs.v6addrs.src;
-			hash_keys.addrs.v6addrs.dst = flkeys->addrs.v6addrs.dst;
-			hash_keys.ports.src = flkeys->ports.src;
-			hash_keys.ports.dst = flkeys->ports.dst;
-			hash_keys.basic.ip_proto = flkeys->basic.ip_proto;
-		} else {
-			memset(&hash_keys, 0, sizeof(hash_keys));
-			hash_keys.control.addr_type = FLOW_DISSECTOR_KEY_IPV6_ADDRS;
-			hash_keys.addrs.v6addrs.src = fl6->saddr;
-			hash_keys.addrs.v6addrs.dst = fl6->daddr;
-			hash_keys.ports.src = fl6->fl6_sport;
-			hash_keys.ports.dst = fl6->fl6_dport;
-			hash_keys.basic.ip_proto = fl6->flowi6_proto;
-		}
-		break;
+	if (skb) {
+		ip6_multipath_l3_keys(skb, &hash_keys);
+		return flow_hash_from_keys(&hash_keys) >> 1;
 	}
 	mhash = flow_hash_from_keys(&hash_keys);
 
-	return mhash >> 1;
+	return get_hash_from_flowi6(fl6) >> 1;
 }
 
 void ip6_route_input(struct sk_buff *skb)
