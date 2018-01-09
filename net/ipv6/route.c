@@ -462,7 +462,7 @@ struct fib6_info *fib6_multipath_select(const struct net *net,
 					const struct sk_buff *skb,
 					int strict)
 {
-	struct fib6_info *sibling, *next_sibling;
+	struct rt6_info *sibling, *next_sibling;
 
 	/* We might have already computed the hash for ICMPv6 errors. In such
 	 * case it will always be non-zero. Otherwise now is the time to do it.
@@ -486,28 +486,19 @@ struct fib6_info *fib6_multipath_select(const struct net *net,
 		break;
 	}
 
-	route_choosen = fl6->mp_hash % (match->rt6i_nsiblings + 1);
-	/* Don't change the route, if route_choosen == 0
-	 * (siblings does not include ourself)
-	 */
-	if (route_choosen)
-		list_for_each_entry_safe(sibling, next_sibling,
-				&match->rt6i_siblings, rt6i_siblings) {
-			route_choosen--;
-			if (route_choosen == 0) {
-				struct inet6_dev *idev = sibling->rt6i_idev;
+	if (fl6->mp_hash <= atomic_read(&match->rt6i_nh_upper_bound))
+		return match;
 
-				if (sibling->rt6i_nh_flags & RTNH_F_DEAD)
-					break;
-				if (sibling->rt6i_nh_flags & RTNH_F_LINKDOWN &&
-				    idev->cnf.ignore_routes_with_linkdown)
-					break;
-				if (rt6_score_route(sibling, oif, strict) < 0)
-					break;
-				match = sibling;
-				break;
-			}
-		}
+	list_for_each_entry_safe(sibling, next_sibling, &match->rt6i_siblings,
+				 rt6i_siblings) {
+		if (fl6->mp_hash > atomic_read(&sibling->rt6i_nh_upper_bound))
+			continue;
+		if (rt6_score_route(sibling, oif, strict) < 0)
+			break;
+		match = sibling;
+		break;
+	}
+
 	return match;
 }
 
