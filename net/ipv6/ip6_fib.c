@@ -823,16 +823,9 @@ insert_above:
 	return ln;
 }
 
-static void fib6_drop_pcpu_from(struct fib6_info *f6i,
-				const struct fib6_table *table)
+static void fib6_copy_metrics(u32 *mp, const struct mx6_config *mxc)
 {
-	int cpu;
-
-	/* Make sure rt6_make_pcpu_route() wont add other percpu routes
-	 * while we are cleaning them here.
-	 */
-	f6i->fib6_destroying = 1;
-	mb(); /* paired with the cmpxchg() in rt6_make_pcpu_route() */
+	int i;
 
 	/* release the reference to this fib entry from
 	 * all of its cached pcpu routes
@@ -1011,7 +1004,7 @@ next_iter:
 			BUG_ON(sibling->fib6_nsiblings != rt->fib6_nsiblings);
 			fib6_nsiblings++;
 		}
-		BUG_ON(fib6_nsiblings != rt->fib6_nsiblings);
+		BUG_ON(rt6i_nsiblings != rt->rt6i_nsiblings);
 		rt6_multipath_rebalance(temp_sibling);
 	}
 
@@ -1702,10 +1695,10 @@ static void fib6_del_route(struct fib6_table *table, struct fib6_node *fn,
 		struct fib6_info *sibling, *next_sibling;
 
 		list_for_each_entry_safe(sibling, next_sibling,
-					 &rt->fib6_siblings, fib6_siblings)
-			sibling->fib6_nsiblings--;
-		rt->fib6_nsiblings = 0;
-		list_del_init(&rt->fib6_siblings);
+					 &rt->rt6i_siblings, rt6i_siblings)
+			sibling->rt6i_nsiblings--;
+		rt->rt6i_nsiblings = 0;
+		list_del_init(&rt->rt6i_siblings);
 		rt6_multipath_rebalance(next_sibling);
 	}
 

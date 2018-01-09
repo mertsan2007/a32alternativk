@@ -76,9 +76,9 @@ static inline bool rt6_need_strict(const struct in6_addr *daddr)
 		(IPV6_ADDR_MULTICAST | IPV6_ADDR_LINKLOCAL | IPV6_ADDR_LOOPBACK);
 }
 
-static inline bool rt6_qualify_for_ecmp(const struct fib6_info *f6i)
+static inline bool rt6_qualify_for_ecmp(const struct rt6_info *rt)
 {
-	return (f6i->fib6_flags & (RTF_GATEWAY|RTF_ADDRCONF|RTF_DYNAMIC)) ==
+	return (rt->rt6i_flags & (RTF_GATEWAY|RTF_ADDRCONF|RTF_DYNAMIC)) ==
 	       RTF_GATEWAY;
 }
 
@@ -197,6 +197,7 @@ void rt6_clean_tohost(struct net *net, struct in6_addr *gateway);
 void rt6_sync_up(struct net_device *dev, unsigned int nh_flags);
 void rt6_disable_ip(struct net_device *dev, unsigned long event);
 void rt6_sync_down_dev(struct net_device *dev, unsigned long event);
+void rt6_multipath_rebalance(struct rt6_info *rt);
 
 void rt6_uncached_list_add(struct rt6_info *rt);
 void rt6_uncached_list_del(struct rt6_info *rt);
