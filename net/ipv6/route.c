@@ -3054,10 +3054,8 @@ static struct fib6_info *ip6_route_info_create(struct fib6_config *cfg,
 	rt->fib6_src.plen = cfg->fc_src_len;
 #endif
 
-	rt->fib6_metric = cfg->fc_metric;
-	rt->fib6_nh.nh_weight = 1;
-
-	rt->fib6_type = cfg->fc_type;
+	rt->rt6i_metric = cfg->fc_metric;
+	rt->rt6i_nh_weight = 1;
 
 	/* We cannot add true routes via loopback here,
 	   they would result in kernel looping; promote them to reject routes
@@ -3864,11 +3862,11 @@ static int rt6_multipath_total_weight(const struct rt6_info *rt)
 	int total = 0;
 
 	if (!rt6_is_dead(rt))
-		total++;
+		total += rt->rt6i_nh_weight;
 
 	list_for_each_entry(iter, &rt->rt6i_siblings, rt6i_siblings) {
 		if (!rt6_is_dead(iter))
-			total++;
+			total += iter->rt6i_nh_weight;
 	}
 
 	return total;
@@ -3879,7 +3877,7 @@ static void rt6_upper_bound_set(struct rt6_info *rt, int *weight, int total)
 	int upper_bound = -1;
 
 	if (!rt6_is_dead(rt)) {
-		(*weight)++;
+		*weight += rt->rt6i_nh_weight;
 		upper_bound = DIV_ROUND_CLOSEST_ULL((u64) (*weight) << 31,
 						    total) - 1;
 	}
@@ -4390,10 +4388,9 @@ static int ip6_route_multipath_add(struct fib6_config *cfg,
 			goto cleanup;
 		}
 
-		rt->fib6_nh.nh_weight = rtnh->rtnh_hops + 1;
+		rt->rt6i_nh_weight = rtnh->rtnh_hops + 1;
 
-		err = ip6_route_info_append(info->nl_net, &rt6_nh_list,
-					    rt, &r_cfg);
+		err = ip6_route_info_append(&rt6_nh_list, rt, &r_cfg);
 		if (err) {
 			fib6_info_release(rt);
 			goto cleanup;
@@ -4626,8 +4623,8 @@ static int rt6_add_nexthop(struct sk_buff *skb, struct fib6_info *rt)
 	if (!rtnh)
 		goto nla_put_failure;
 
-	rtnh->rtnh_hops = rt->fib6_nh.nh_weight - 1;
-	rtnh->rtnh_ifindex = dev ? dev->ifindex : 0;
+	rtnh->rtnh_hops = rt->rt6i_nh_weight - 1;
+	rtnh->rtnh_ifindex = rt->dst.dev ? rt->dst.dev->ifindex : 0;
 
 	if (rt6_nexthop_info(skb, rt, &flags, true) < 0)
 		goto nla_put_failure;
