@@ -1364,7 +1364,7 @@ ssize_t tls_sw_splice_read(struct socket *sock,  loff_t *ppos,
 
 	while (msg_data_left(msg)) {
 		if (sk->sk_err) {
-			ret = sk->sk_err;
+			ret = -sk->sk_err;
 			goto send_end;
 		}
 
@@ -1523,7 +1523,7 @@ bool tls_sw_stream_read(const struct sock *sk)
 		size_t copy, required_size;
 
 		if (sk->sk_err) {
-			ret = sk->sk_err;
+			ret = -sk->sk_err;
 			goto sendpage_end;
 		}
 

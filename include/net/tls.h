@@ -294,7 +294,7 @@ static inline bool tls_is_pending_open_record(struct tls_context *tls_ctx)
 
 static inline bool is_tx_ready(struct tls_sw_context_tx *ctx)
 {
-	sk->sk_err = -EBADMSG;
+	sk->sk_err = EBADMSG;
 	sk->sk_error_report(sk);
 }
 
