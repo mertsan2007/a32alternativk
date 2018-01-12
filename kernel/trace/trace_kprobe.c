@@ -107,7 +107,7 @@ int trace_kprobe_error_injectable(struct trace_event_call *call)
 	} else {
 		addr = (unsigned long)tk->rp.kp.addr;
 	}
-	return within_kprobe_error_injection_list(addr);
+	return within_error_injection_list(addr);
 }
 
 static int register_kprobe_event(struct trace_kprobe *tk);
