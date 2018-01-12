@@ -236,7 +236,6 @@ static int htab_map_alloc_check(union bpf_attr *attr)
 	 */
 	bool percpu_lru = (attr->map_flags & BPF_F_NO_COMMON_LRU);
 	bool prealloc = !(attr->map_flags & BPF_F_NO_PREALLOC);
-	bool zero_seed = (attr->map_flags & BPF_F_ZERO_SEED);
 	int numa_node = bpf_map_attr_numa_node(attr);
 
 	BUILD_BUG_ON(offsetof(struct htab_elem, htab) !=
@@ -250,12 +249,8 @@ static int htab_map_alloc_check(union bpf_attr *attr)
 		 */
 		return -EPERM;
 
-	if (zero_seed && !capable(CAP_SYS_ADMIN))
-		/* Guard against local DoS, and discourage production use. */
-		return -EPERM;
-
-	if (attr->map_flags & ~HTAB_CREATE_FLAG_MASK ||
-	    !bpf_map_flags_access_ok(attr->map_flags))
+	if (attr->map_flags & ~HTAB_CREATE_FLAG_MASK)
+		/* reserved bits should not be used */
 		return -EINVAL;
 
 	if (!lru && percpu_lru)
@@ -288,9 +283,6 @@ static int htab_map_alloc_check(union bpf_attr *attr)
 		 * kmalloc-able later in htab_map_update_elem()
 		 */
 		return -E2BIG;
-	/* percpu map value size is bound by PCPU_MIN_UNIT_SIZE */
-	if (percpu && round_up(attr->value_size, 8) > PCPU_MIN_UNIT_SIZE)
-		return -E2BIG;
 
 	return 0;
 }
@@ -312,52 +304,6 @@ static struct bpf_map *htab_map_alloc(union bpf_attr *attr)
 	struct bpf_htab *htab;
 	int err, i;
 	u64 cost;
-
-	BUILD_BUG_ON(offsetof(struct htab_elem, htab) !=
-		     offsetof(struct htab_elem, hash_node.pprev));
-	BUILD_BUG_ON(offsetof(struct htab_elem, fnode.next) !=
-		     offsetof(struct htab_elem, hash_node.pprev));
-
-	if (lru && !capable(CAP_SYS_ADMIN))
-		/* LRU implementation is much complicated than other
-		 * maps.  Hence, limit to CAP_SYS_ADMIN for now.
-		 */
-		return ERR_PTR(-EPERM);
-
-	if (attr->map_flags & ~HTAB_CREATE_FLAG_MASK)
-		/* reserved bits should not be used */
-		return ERR_PTR(-EINVAL);
-
-	if (!lru && percpu_lru)
-		return ERR_PTR(-EINVAL);
-
-	if (lru && !prealloc)
-		return ERR_PTR(-ENOTSUPP);
-
-	if (numa_node != NUMA_NO_NODE && (percpu || percpu_lru))
-		return ERR_PTR(-EINVAL);
-
-	/* check sanity of attributes.
-	 * value_size == 0 may be allowed in the future to use map as a set
-	 */
-	if (attr->max_entries == 0 || attr->key_size == 0 ||
-	    attr->value_size == 0)
-		return ERR_PTR(-EINVAL);
-
-	if (attr->key_size > MAX_BPF_STACK)
-		/* eBPF programs initialize keys on stack, so they cannot be
-		 * larger than max stack size
-		 */
-		return ERR_PTR(-E2BIG);
-
-	if (attr->value_size >= KMALLOC_MAX_SIZE -
-	    MAX_BPF_STACK - sizeof(struct htab_elem))
-		/* if value_size is bigger, the user space won't be able to
-		 * access the elements via bpf syscall. This check also makes
-		 * sure that the elem_size doesn't overflow and it's
-		 * kmalloc-able later in htab_map_update_elem()
-		 */
-		return ERR_PTR(-E2BIG);
 
 	htab = kzalloc(sizeof(*htab), GFP_USER);
 	if (!htab)
