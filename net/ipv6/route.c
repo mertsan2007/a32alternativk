@@ -2757,7 +2757,7 @@ static struct rt6_info *ip6_nh_lookup_table(struct net *net,
 		flags |= RT6_LOOKUP_F_HAS_SADDR;
 
 	flags |= RT6_LOOKUP_F_IGNORE_LINKSTATE;
-	rt = ip6_pol_route(net, table, cfg->fc_ifindex, &fl6, NULL, flags);
+	rt = ip6_pol_route(net, table, cfg->fc_ifindex, &fl6, flags);
 
 	/* if table lookup failed, fall back to full lookup */
 	if (rt == net->ipv6.ip6_null_entry) {
@@ -2779,7 +2779,10 @@ static int ip6_route_check_nh(struct net *net,
 	int err = -EHOSTUNREACH;
 
 	if (cfg->fc_table) {
-		grt = ip6_nh_lookup_table(net, cfg, gw_addr);
+		int flags = RT6_LOOKUP_F_IFACE;
+
+		grt = ip6_nh_lookup_table(net, cfg, gw_addr,
+					  cfg->fc_table, flags);
 		if (grt) {
 			if (grt->rt6i_flags & RTF_GATEWAY ||
 			    (dev && dev != grt->dst.dev)) {
