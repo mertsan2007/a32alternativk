@@ -1322,10 +1322,21 @@ union bpf_attr {
  *     @optlen: length of optval in bytes
  *     Return: 0 or negative error
  *
- * 		In comparison, using **bpf_probe_read()** helper here instead
- * 		to read the string would require to estimate the length at
- * 		compile time, and would often result in copying more memory
- * 		than necessary.
+ * int bpf_sock_ops_cb_flags_set(bpf_sock_ops, flags)
+ *     Set callback flags for sock_ops
+ *     @bpf_sock_ops: pointer to bpf_sock_ops_kern struct
+ *     @flags: flags value
+ *     Return: 0 for no error
+ *             -EINVAL if there is no full tcp socket
+ *             bits in flags that are not supported by current kernel
+ *
+ * int bpf_skb_adjust_room(skb, len_diff, mode, flags)
+ *     Grow or shrink room in sk_buff.
+ *     @skb: pointer to skb
+ *     @len_diff: (signed) amount of room to grow/shrink
+ *     @mode: operation mode (enum bpf_adj_room_mode)
+ *     @flags: reserved for future use
+ *     Return: 0 on success or negative error code
  *
  * 		Another useful use case is when parsing individual process
  * 		arguments or individual environment variables navigating
@@ -1782,14 +1793,11 @@ struct bpf_sock_ops {
 				 */
 	__u32 snd_cwnd;
 	__u32 srtt_us;		/* Averaged RTT << 3 in usecs */
+	__u32 bpf_sock_ops_cb_flags; /* flags defined in uapi/linux/tcp.h */
 };
 
 /* Definitions for bpf_sock_ops_cb_flags */
-#define BPF_SOCK_OPS_RTO_CB_FLAG	(1<<0)
-#define BPF_SOCK_OPS_RETRANS_CB_FLAG	(1<<1)
-#define BPF_SOCK_OPS_STATE_CB_FLAG	(1<<2)
-#define BPF_SOCK_OPS_RTT_CB_FLAG	(1<<3)
-#define BPF_SOCK_OPS_ALL_CB_FLAGS       0xF		/* Mask of all currently
+#define BPF_SOCK_OPS_ALL_CB_FLAGS       0		/* Mask of all currently
 							 * supported cb flags
 							 */
 
