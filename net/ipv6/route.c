@@ -2722,6 +2722,31 @@ static struct rt6_info *ip6_nh_lookup_table(struct net *net,
 	return rt;
 }
 
+static int ip6_route_check_nh_onlink(struct net *net,
+				     struct fib6_config *cfg,
+				     struct net_device *dev,
+				     struct netlink_ext_ack *extack)
+{
+	u32 tbid = l3mdev_fib_table(dev) ? : RT_TABLE_LOCAL;
+	const struct in6_addr *gw_addr = &cfg->fc_gateway;
+	u32 flags = RTF_LOCAL | RTF_ANYCAST | RTF_REJECT;
+	struct rt6_info *grt;
+	int err;
+
+	err = 0;
+	grt = ip6_nh_lookup_table(net, cfg, gw_addr, tbid, 0);
+	if (grt) {
+		if (grt->rt6i_flags & flags || dev != grt->dst.dev) {
+			NL_SET_ERR_MSG(extack, "Nexthop has invalid gateway");
+			err = -EINVAL;
+		}
+
+		ip6_rt_put(grt);
+	}
+
+	return err;
+}
+
 static int ip6_route_check_nh(struct net *net,
 			      struct fib6_config *cfg,
 			      struct net_device **_dev,
@@ -2957,7 +2982,12 @@ static struct rt6_info *ip6_route_info_create(struct fib6_config *cfg,
 				goto out;
 			}
 
-			err = ip6_route_check_nh(net, cfg, &dev, &idev);
+			if (cfg->fc_flags & RTNH_F_ONLINK) {
+				err = ip6_route_check_nh_onlink(net, cfg, dev,
+								extack);
+			} else {
+				err = ip6_route_check_nh(net, cfg, &dev, &idev);
+			}
 			if (err)
 				goto out;
 		}
@@ -2993,6 +3023,7 @@ install_route:
 	if (!(rt->rt6i_flags & (RTF_LOCAL | RTF_ANYCAST)) &&
 	    !netif_carrier_ok(dev))
 		rt->rt6i_nh_flags |= RTNH_F_LINKDOWN;
+	rt->rt6i_nh_flags |= (cfg->fc_flags & RTNH_F_ONLINK);
 	rt->dst.dev = dev;
 	rt->rt6i_idev = idev;
 	rt->rt6i_table = table;
@@ -4444,8 +4475,8 @@ static int rt6_nexthop_info(struct sk_buff *skb, struct fib6_info *rt,
 			goto nla_put_failure;
 	}
 
-	*flags |= (rt->fib6_nh.nh_flags & RTNH_F_ONLINK);
-	if (rt->fib6_nh.nh_flags & RTNH_F_OFFLOAD)
+	*flags |= (rt->rt6i_nh_flags & RTNH_F_ONLINK);
+	if (rt->rt6i_nh_flags & RTNH_F_OFFLOAD)
 		*flags |= RTNH_F_OFFLOAD;
 
 	/* not needed for multipath encoding b/c it has a rtnexthop struct */
