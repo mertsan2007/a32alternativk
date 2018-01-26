@@ -1066,34 +1066,32 @@ EXPORT_SYMBOL_GPL(__bpf_call_base);
 #define BPF_INSN_MAP(INSN_2, INSN_3)		\
 	/* 32 bit ALU operations. */		\
 	/*   Register based. */			\
-	INSN_3(ALU, ADD,  X),			\
-	INSN_3(ALU, SUB,  X),			\
-	INSN_3(ALU, AND,  X),			\
-	INSN_3(ALU, OR,   X),			\
-	INSN_3(ALU, LSH,  X),			\
-	INSN_3(ALU, RSH,  X),			\
-	INSN_3(ALU, XOR,  X),			\
-	INSN_3(ALU, MUL,  X),			\
-	INSN_3(ALU, MOV,  X),			\
-	INSN_3(ALU, ARSH, X),			\
-	INSN_3(ALU, DIV,  X),			\
-	INSN_3(ALU, MOD,  X),			\
+	INSN_3(ALU, ADD, X),			\
+	INSN_3(ALU, SUB, X),			\
+	INSN_3(ALU, AND, X),			\
+	INSN_3(ALU, OR,  X),			\
+	INSN_3(ALU, LSH, X),			\
+	INSN_3(ALU, RSH, X),			\
+	INSN_3(ALU, XOR, X),			\
+	INSN_3(ALU, MUL, X),			\
+	INSN_3(ALU, MOV, X),			\
+	INSN_3(ALU, DIV, X),			\
+	INSN_3(ALU, MOD, X),			\
 	INSN_2(ALU, NEG),			\
 	INSN_3(ALU, END, TO_BE),		\
 	INSN_3(ALU, END, TO_LE),		\
 	/*   Immediate based. */		\
-	INSN_3(ALU, ADD,  K),			\
-	INSN_3(ALU, SUB,  K),			\
-	INSN_3(ALU, AND,  K),			\
-	INSN_3(ALU, OR,   K),			\
-	INSN_3(ALU, LSH,  K),			\
-	INSN_3(ALU, RSH,  K),			\
-	INSN_3(ALU, XOR,  K),			\
-	INSN_3(ALU, MUL,  K),			\
-	INSN_3(ALU, MOV,  K),			\
-	INSN_3(ALU, ARSH, K),			\
-	INSN_3(ALU, DIV,  K),			\
-	INSN_3(ALU, MOD,  K),			\
+	INSN_3(ALU, ADD, K),			\
+	INSN_3(ALU, SUB, K),			\
+	INSN_3(ALU, AND, K),			\
+	INSN_3(ALU, OR,  K),			\
+	INSN_3(ALU, LSH, K),			\
+	INSN_3(ALU, RSH, K),			\
+	INSN_3(ALU, XOR, K),			\
+	INSN_3(ALU, MUL, K),			\
+	INSN_3(ALU, MOV, K),			\
+	INSN_3(ALU, DIV, K),			\
+	INSN_3(ALU, MOD, K),			\
 	/* 64 bit ALU operations. */		\
 	/*   Register based. */			\
 	INSN_3(ALU64, ADD,  X),			\
@@ -1126,31 +1124,6 @@ EXPORT_SYMBOL_GPL(__bpf_call_base);
 	INSN_2(JMP, CALL),			\
 	/* Exit instruction. */			\
 	INSN_2(JMP, EXIT),			\
-	/* 32-bit Jump instructions. */		\
-	/*   Register based. */			\
-	INSN_3(JMP32, JEQ,  X),			\
-	INSN_3(JMP32, JNE,  X),			\
-	INSN_3(JMP32, JGT,  X),			\
-	INSN_3(JMP32, JLT,  X),			\
-	INSN_3(JMP32, JGE,  X),			\
-	INSN_3(JMP32, JLE,  X),			\
-	INSN_3(JMP32, JSGT, X),			\
-	INSN_3(JMP32, JSLT, X),			\
-	INSN_3(JMP32, JSGE, X),			\
-	INSN_3(JMP32, JSLE, X),			\
-	INSN_3(JMP32, JSET, X),			\
-	/*   Immediate based. */		\
-	INSN_3(JMP32, JEQ,  K),			\
-	INSN_3(JMP32, JNE,  K),			\
-	INSN_3(JMP32, JGT,  K),			\
-	INSN_3(JMP32, JLT,  K),			\
-	INSN_3(JMP32, JGE,  K),			\
-	INSN_3(JMP32, JLE,  K),			\
-	INSN_3(JMP32, JSGT, K),			\
-	INSN_3(JMP32, JSLT, K),			\
-	INSN_3(JMP32, JSGE, K),			\
-	INSN_3(JMP32, JSLE, K),			\
-	INSN_3(JMP32, JSET, K),			\
 	/* Jump instructions. */		\
 	/*   Register based. */			\
 	INSN_3(JMP, JEQ,  X),			\
@@ -1197,7 +1170,14 @@ EXPORT_SYMBOL_GPL(__bpf_call_base);
 	INSN_3(LDX, MEM, W),			\
 	INSN_3(LDX, MEM, DW),			\
 	/*   Immediate based. */		\
-	INSN_3(LD, IMM, DW)
+	INSN_3(LD, IMM, DW),			\
+	/*   Misc (old cBPF carry-over). */	\
+	INSN_3(LD, ABS, B),			\
+	INSN_3(LD, ABS, H),			\
+	INSN_3(LD, ABS, W),			\
+	INSN_3(LD, IND, B),			\
+	INSN_3(LD, IND, H),			\
+	INSN_3(LD, IND, W)
 
 bool bpf_opcode_in_insntable(u8 code)
 {
@@ -1207,13 +1187,6 @@ bool bpf_opcode_in_insntable(u8 code)
 		[0 ... 255] = false,
 		/* Now overwrite non-defaults ... */
 		BPF_INSN_MAP(BPF_INSN_2_TBL, BPF_INSN_3_TBL),
-		/* UAPI exposed, but rewritten opcodes. cBPF carry-over. */
-		[BPF_LD | BPF_ABS | BPF_B] = true,
-		[BPF_LD | BPF_ABS | BPF_H] = true,
-		[BPF_LD | BPF_ABS | BPF_W] = true,
-		[BPF_LD | BPF_IND | BPF_B] = true,
-		[BPF_LD | BPF_IND | BPF_H] = true,
-		[BPF_LD | BPF_IND | BPF_W] = true,
 	};
 #undef BPF_INSN_3_TBL
 #undef BPF_INSN_2_TBL
@@ -1231,68 +1204,16 @@ bool bpf_opcode_in_insntable(u8 code)
  */
 static u64 ___bpf_prog_run(u64 *regs, const struct bpf_insn *insn, u64 *stack)
 {
+	u64 tmp;
 #define BPF_INSN_2_LBL(x, y)    [BPF_##x | BPF_##y] = &&x##_##y
 #define BPF_INSN_3_LBL(x, y, z) [BPF_##x | BPF_##y | BPF_##z] = &&x##_##y##_##z
-	static const void * const jumptable[256] __annotate_jump_table = {
+	static const void *jumptable[256] = {
 		[0 ... 255] = &&default_label,
 		/* Now overwrite non-defaults ... */
-		/* 32 bit ALU operations */
-		[BPF_ALU | BPF_ADD | BPF_X] = &&ALU_ADD_X,
-		[BPF_ALU | BPF_ADD | BPF_K] = &&ALU_ADD_K,
-		[BPF_ALU | BPF_SUB | BPF_X] = &&ALU_SUB_X,
-		[BPF_ALU | BPF_SUB | BPF_K] = &&ALU_SUB_K,
-		[BPF_ALU | BPF_AND | BPF_X] = &&ALU_AND_X,
-		[BPF_ALU | BPF_AND | BPF_K] = &&ALU_AND_K,
-		[BPF_ALU | BPF_OR | BPF_X]  = &&ALU_OR_X,
-		[BPF_ALU | BPF_OR | BPF_K]  = &&ALU_OR_K,
-		[BPF_ALU | BPF_LSH | BPF_X] = &&ALU_LSH_X,
-		[BPF_ALU | BPF_LSH | BPF_K] = &&ALU_LSH_K,
-		[BPF_ALU | BPF_RSH | BPF_X] = &&ALU_RSH_X,
-		[BPF_ALU | BPF_RSH | BPF_K] = &&ALU_RSH_K,
-		[BPF_ALU | BPF_XOR | BPF_X] = &&ALU_XOR_X,
-		[BPF_ALU | BPF_XOR | BPF_K] = &&ALU_XOR_K,
-		[BPF_ALU | BPF_MUL | BPF_X] = &&ALU_MUL_X,
-		[BPF_ALU | BPF_MUL | BPF_K] = &&ALU_MUL_K,
-		[BPF_ALU | BPF_MOV | BPF_X] = &&ALU_MOV_X,
-		[BPF_ALU | BPF_MOV | BPF_K] = &&ALU_MOV_K,
-		[BPF_ALU | BPF_DIV | BPF_X] = &&ALU_DIV_X,
-		[BPF_ALU | BPF_DIV | BPF_K] = &&ALU_DIV_K,
-		[BPF_ALU | BPF_MOD | BPF_X] = &&ALU_MOD_X,
-		[BPF_ALU | BPF_MOD | BPF_K] = &&ALU_MOD_K,
-		[BPF_ALU | BPF_NEG] = &&ALU_NEG,
-		[BPF_ALU | BPF_END | BPF_TO_BE] = &&ALU_END_TO_BE,
-		[BPF_ALU | BPF_END | BPF_TO_LE] = &&ALU_END_TO_LE,
-		/* 64 bit ALU operations */
-		[BPF_ALU64 | BPF_ADD | BPF_X] = &&ALU64_ADD_X,
-		[BPF_ALU64 | BPF_ADD | BPF_K] = &&ALU64_ADD_K,
-		[BPF_ALU64 | BPF_SUB | BPF_X] = &&ALU64_SUB_X,
-		[BPF_ALU64 | BPF_SUB | BPF_K] = &&ALU64_SUB_K,
-		[BPF_ALU64 | BPF_AND | BPF_X] = &&ALU64_AND_X,
-		[BPF_ALU64 | BPF_AND | BPF_K] = &&ALU64_AND_K,
-		[BPF_ALU64 | BPF_OR | BPF_X] = &&ALU64_OR_X,
-		[BPF_ALU64 | BPF_OR | BPF_K] = &&ALU64_OR_K,
-		[BPF_ALU64 | BPF_LSH | BPF_X] = &&ALU64_LSH_X,
-		[BPF_ALU64 | BPF_LSH | BPF_K] = &&ALU64_LSH_K,
-		[BPF_ALU64 | BPF_RSH | BPF_X] = &&ALU64_RSH_X,
-		[BPF_ALU64 | BPF_RSH | BPF_K] = &&ALU64_RSH_K,
-		[BPF_ALU64 | BPF_XOR | BPF_X] = &&ALU64_XOR_X,
-		[BPF_ALU64 | BPF_XOR | BPF_K] = &&ALU64_XOR_K,
-		[BPF_ALU64 | BPF_MUL | BPF_X] = &&ALU64_MUL_X,
-		[BPF_ALU64 | BPF_MUL | BPF_K] = &&ALU64_MUL_K,
-		[BPF_ALU64 | BPF_MOV | BPF_X] = &&ALU64_MOV_X,
-		[BPF_ALU64 | BPF_MOV | BPF_K] = &&ALU64_MOV_K,
-		[BPF_ALU64 | BPF_ARSH | BPF_X] = &&ALU64_ARSH_X,
-		[BPF_ALU64 | BPF_ARSH | BPF_K] = &&ALU64_ARSH_K,
-		[BPF_ALU64 | BPF_DIV | BPF_X] = &&ALU64_DIV_X,
-		[BPF_ALU64 | BPF_DIV | BPF_K] = &&ALU64_DIV_K,
-		[BPF_ALU64 | BPF_MOD | BPF_X] = &&ALU64_MOD_X,
-		[BPF_ALU64 | BPF_MOD | BPF_K] = &&ALU64_MOD_K,
-		[BPF_ALU64 | BPF_NEG] = &&ALU64_NEG,
-		/* Call instruction */
-		[BPF_JMP | BPF_CALL] = &&JMP_CALL,
+		BPF_INSN_MAP(BPF_INSN_2_LBL, BPF_INSN_3_LBL),
+		/* Non-UAPI available opcodes. */
 		[BPF_JMP | BPF_CALL_ARGS] = &&JMP_CALL_ARGS,
 		[BPF_JMP | BPF_TAIL_CALL] = &&JMP_TAIL_CALL,
-		[BPF_ST  | BPF_NOSPEC] = &&ST_NOSPEC,
 	};
 #undef BPF_INSN_3_LBL
 #undef BPF_INSN_2_LBL
