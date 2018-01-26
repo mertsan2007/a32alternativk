@@ -3908,27 +3908,6 @@ BPF_CALL_5(bpf_setsockopt, struct bpf_sock_ops_kern *, bpf_sock,
 			ret = -EINVAL;
 		}
 #ifdef CONFIG_INET
-	} else if (level == SOL_IP) {
-		if (optlen != sizeof(int) || sk->sk_family != AF_INET)
-			return -EINVAL;
-
-		val = *((int *)optval);
-		/* Only some options are supported */
-		switch (optname) {
-		case IP_TOS:
-			if (val < -1 || val > 0xff) {
-				ret = -EINVAL;
-			} else {
-				struct inet_sock *inet = inet_sk(sk);
-
-				if (val == -1)
-					val = 0;
-				inet->tos = val;
-			}
-			break;
-		default:
-			ret = -EINVAL;
-		}
 #if IS_ENABLED(CONFIG_IPV6)
 	} else if (level == SOL_IPV6) {
 		if (optlen != sizeof(int) || sk->sk_family != AF_INET6)
@@ -4034,6 +4013,22 @@ BPF_CALL_5(bpf_getsockopt, struct bpf_sock_ops_kern *, bpf_sock,
 		} else {
 			goto err_clear;
 		}
+#if IS_ENABLED(CONFIG_IPV6)
+	} else if (level == SOL_IPV6) {
+		struct ipv6_pinfo *np = inet6_sk(sk);
+
+		if (optlen != sizeof(int) || sk->sk_family != AF_INET6)
+			goto err_clear;
+
+		/* Only some options are supported */
+		switch (optname) {
+		case IPV6_TCLASS:
+			*((int *)optval) = (int)np->tclass;
+			break;
+		default:
+			goto err_clear;
+		}
+#endif
 	} else {
 		goto err_clear;
 	}
@@ -4731,6 +4726,7 @@ static bool sock_ops_is_valid_access(int off, int size,
 	if (type == BPF_WRITE) {
 		switch (off) {
 		case offsetof(struct bpf_sock_ops, reply):
+		case offsetof(struct bpf_sock_ops, sk_txhash):
 			if (size != size_default)
 				return false;
 			break;
@@ -5682,7 +5678,8 @@ static u32 sock_ops_convert_ctx_access(enum bpf_access_type type,
 		break;
 
 	case offsetof(struct bpf_sock_ops, sk_txhash):
-		SOCK_OPS_GET_FIELD(sk_txhash, sk_txhash, struct sock);
+		SOCK_OPS_GET_OR_SET_FIELD(sk_txhash, sk_txhash,
+					  struct sock, type);
 		break;
 
 	case offsetof(struct bpf_sock_ops, bytes_received):
@@ -5693,6 +5690,7 @@ static u32 sock_ops_convert_ctx_access(enum bpf_access_type type,
 	case offsetof(struct bpf_sock_ops, bytes_acked):
 		SOCK_OPS_GET_FIELD(bytes_acked, bytes_acked, struct tcp_sock);
 		break;
+
 	}
 	return insn - insn_buf;
 }
