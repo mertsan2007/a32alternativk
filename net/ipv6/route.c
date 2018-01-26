@@ -2768,31 +2768,6 @@ static struct rt6_info *ip6_nh_lookup_table(struct net *net,
 	return rt;
 }
 
-static int ip6_route_check_nh_onlink(struct net *net,
-				     struct fib6_config *cfg,
-				     const struct net_device *dev,
-				     struct netlink_ext_ack *extack)
-{
-	u32 tbid = l3mdev_fib_table(dev) ? : RT_TABLE_LOCAL;
-	const struct in6_addr *gw_addr = &cfg->fc_gateway;
-	u32 flags = RTF_LOCAL | RTF_ANYCAST | RTF_REJECT;
-	struct rt6_info *grt;
-	int err;
-
-	err = 0;
-	grt = ip6_nh_lookup_table(net, cfg, gw_addr, tbid, 0);
-	if (grt) {
-		if (grt->rt6i_flags & flags || dev != grt->dst.dev) {
-			NL_SET_ERR_MSG(extack, "Nexthop has invalid gateway");
-			err = -EINVAL;
-		}
-
-		ip6_rt_put(grt);
-	}
-
-	return err;
-}
-
 static int ip6_route_check_nh(struct net *net,
 			      struct fib6_config *cfg,
 			      struct net_device **_dev,
@@ -2804,10 +2779,7 @@ static int ip6_route_check_nh(struct net *net,
 	int err = -EHOSTUNREACH;
 
 	if (cfg->fc_table) {
-		int flags = RT6_LOOKUP_F_IFACE;
-
-		grt = ip6_nh_lookup_table(net, cfg, gw_addr,
-					  cfg->fc_table, flags);
+		grt = ip6_nh_lookup_table(net, cfg, gw_addr);
 		if (grt) {
 			if (grt->rt6i_flags & RTF_GATEWAY ||
 			    (dev && dev != grt->dst.dev)) {
@@ -2818,7 +2790,7 @@ static int ip6_route_check_nh(struct net *net,
 	}
 
 	if (!grt)
-		grt = rt6_lookup(net, gw_addr, NULL, cfg->fc_ifindex, NULL, 1);
+		grt = rt6_lookup(net, gw_addr, NULL, cfg->fc_ifindex, 1);
 
 	if (!grt)
 		goto out;
@@ -2844,70 +2816,7 @@ out:
 	return err;
 }
 
-static int ip6_validate_gw(struct net *net, struct fib6_config *cfg,
-			   struct net_device **_dev, struct inet6_dev **idev,
-			   struct netlink_ext_ack *extack)
-{
-	const struct in6_addr *gw_addr = &cfg->fc_gateway;
-	int gwa_type = ipv6_addr_type(gw_addr);
-	const struct net_device *dev = *_dev;
-	int err = -EINVAL;
-
-	/* if gw_addr is local we will fail to detect this in case
-	 * address is still TENTATIVE (DAD in progress). rt6_lookup()
-	 * will return already-added prefix route via interface that
-	 * prefix route was assigned to, which might be non-loopback.
-	 */
-	if (ipv6_chk_addr_and_flags(net, gw_addr,
-				    gwa_type & IPV6_ADDR_LINKLOCAL ?
-				    dev : NULL, 0, 0)) {
-		NL_SET_ERR_MSG(extack, "Invalid gateway address");
-		goto out;
-	}
-
-	if (gwa_type != (IPV6_ADDR_LINKLOCAL | IPV6_ADDR_UNICAST)) {
-		/* IPv6 strictly inhibits using not link-local
-		 * addresses as nexthop address.
-		 * Otherwise, router will not able to send redirects.
-		 * It is very good, but in some (rare!) circumstances
-		 * (SIT, PtP, NBMA NOARP links) it is handy to allow
-		 * some exceptions. --ANK
-		 * We allow IPv4-mapped nexthops to support RFC4798-type
-		 * addressing
-		 */
-		if (!(gwa_type & (IPV6_ADDR_UNICAST | IPV6_ADDR_MAPPED))) {
-			NL_SET_ERR_MSG(extack, "Invalid gateway address");
-			goto out;
-		}
-
-		if (cfg->fc_flags & RTNH_F_ONLINK)
-			err = ip6_route_check_nh_onlink(net, cfg, dev, extack);
-		else
-			err = ip6_route_check_nh(net, cfg, _dev, idev);
-
-		if (err)
-			goto out;
-	}
-
-	/* reload in case device was changed */
-	dev = *_dev;
-
-	err = -EINVAL;
-	if (!dev) {
-		NL_SET_ERR_MSG(extack, "Egress device not specified");
-		goto out;
-	} else if (dev->flags & IFF_LOOPBACK) {
-		NL_SET_ERR_MSG(extack,
-			       "Egress device can not be loopback device for this route");
-		goto out;
-	}
-	err = 0;
-out:
-	return err;
-}
-
-static struct fib6_info *ip6_route_info_create(struct fib6_config *cfg,
-					      gfp_t gfp_flags,
+static struct rt6_info *ip6_route_info_create(struct fib6_config *cfg,
 					      struct netlink_ext_ack *extack)
 {
 	struct net *net = cfg->fc_nlinfo.nl_net;
@@ -3071,7 +2980,36 @@ static struct fib6_info *ip6_route_info_create(struct fib6_config *cfg,
 		if (err)
 			goto out;
 
-		rt->fib6_nh.nh_gw = cfg->fc_gateway;
+		if (gwa_type != (IPV6_ADDR_LINKLOCAL|IPV6_ADDR_UNICAST)) {
+			/* IPv6 strictly inhibits using not link-local
+			   addresses as nexthop address.
+			   Otherwise, router will not able to send redirects.
+			   It is very good, but in some (rare!) circumstances
+			   (SIT, PtP, NBMA NOARP links) it is handy to allow
+			   some exceptions. --ANK
+			   We allow IPv4-mapped nexthops to support RFC4798-type
+			   addressing
+			 */
+			if (!(gwa_type & (IPV6_ADDR_UNICAST |
+					  IPV6_ADDR_MAPPED))) {
+				NL_SET_ERR_MSG(extack,
+					       "Invalid gateway address");
+				goto out;
+			}
+
+			err = ip6_route_check_nh(net, cfg, &dev, &idev);
+			if (err)
+				goto out;
+		}
+		err = -EINVAL;
+		if (!dev) {
+			NL_SET_ERR_MSG(extack, "Egress device not specified");
+			goto out;
+		} else if (dev->flags & IFF_LOOPBACK) {
+			NL_SET_ERR_MSG(extack,
+				       "Egress device can not be loopback device for this route");
+			goto out;
+		}
 	}
 
 	err = -ENODEV;
