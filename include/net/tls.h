@@ -36,6 +36,7 @@
 
 #include <linux/types.h>
 #include <asm/byteorder.h>
+#include <linux/crypto.h>
 #include <linux/socket.h>
 #include <linux/tcp.h>
 #include <net/tcp.h>
@@ -59,29 +60,25 @@
 #define TLS_AAD_SPACE_SIZE		13
 #define TLS_DEVICE_NAME_MAX		32
 
-/*
- * This structure defines the routines for Inline TLS driver.
- * The following routines are optional and filled with a
- * null pointer if not defined.
- *
- * @name: Its the name of registered Inline tls device
- * @dev_list: Inline tls device list
- * int (*feature)(struct tls_device *device);
- *     Called to return Inline TLS driver capability
- *
- * int (*hash)(struct tls_device *device, struct sock *sk);
- *     This function sets Inline driver for listen and program
- *     device specific functioanlity as required
- *
- * void (*unhash)(struct tls_device *device, struct sock *sk);
- *     This function cleans listen state set by Inline TLS driver
- */
-struct tls_device {
-	char name[TLS_DEVICE_NAME_MAX];
-	struct list_head dev_list;
-	int  (*feature)(struct tls_device *device);
-	int  (*hash)(struct tls_device *device, struct sock *sk);
-	void (*unhash)(struct tls_device *device, struct sock *sk);
+struct tls_sw_context {
+	struct crypto_aead *aead_send;
+	struct crypto_wait async_wait;
+
+	/* Sending context */
+	char aad_space[TLS_AAD_SPACE_SIZE];
+
+	unsigned int sg_plaintext_size;
+	int sg_plaintext_num_elem;
+	struct scatterlist sg_plaintext_data[MAX_SKB_FRAGS];
+
+	unsigned int sg_encrypted_size;
+	int sg_encrypted_num_elem;
+	struct scatterlist sg_encrypted_data[MAX_SKB_FRAGS];
+
+	/* AAD | sg_plaintext_data | sg_tag */
+	struct scatterlist sg_aead_in[2];
+	/* AAD | sg_encrypted_data (data contain overhead for hdr&iv&tag) */
+	struct scatterlist sg_aead_out[2];
 };
 
 enum {
