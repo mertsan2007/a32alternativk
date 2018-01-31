@@ -361,11 +361,8 @@ int bpf_prog_test_run_xdp(struct bpf_prog *prog, const union bpf_attr *kattr,
 	rxqueue = __netif_get_rx_queue(current->nsproxy->net_ns->loopback_dev, 0);
 	xdp.rxq = &rxqueue->xdp_rxq;
 
-	ret = bpf_test_run(prog, &xdp, repeat, &retval, &duration);
-	if (ret)
-		goto out;
-	if (xdp.data != data + XDP_PACKET_HEADROOM + NET_IP_ALIGN ||
-	    xdp.data_end != xdp.data + size)
+	retval = bpf_test_run(prog, &xdp, repeat, &duration);
+	if (xdp.data != data + XDP_PACKET_HEADROOM + NET_IP_ALIGN)
 		size = xdp.data_end - xdp.data;
 	ret = bpf_test_finish(kattr, uattr, xdp.data, size, retval, duration);
 out:
