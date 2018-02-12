@@ -599,7 +599,7 @@ static void ir_do_keyup(struct rc_dev *dev, bool sync)
 	if (!dev->keypressed)
 		return;
 
-	IR_dprintk(1, "keyup key 0x%04x\n", dev->last_keycode);
+	dev_dbg(&dev->dev, "keyup key 0x%04x\n", dev->last_keycode);
 	del_timer(&dev->timer_repeat);
 	input_report_key(dev->input_dev, dev->last_keycode, 0);
 	led_trigger_event(led_feedback, LED_OFF);
@@ -1244,6 +1244,13 @@ static ssize_t store_protocols(struct device *device,
 	rc = parse_protocol_change(dev, &new_protocols, buf);
 	if (rc < 0)
 		goto out;
+
+	rc = dev->change_protocol(dev, &new_protocols);
+	if (rc < 0) {
+		dev_dbg(&dev->dev, "Error setting protocols to 0x%llx\n",
+			(long long)new_protocols);
+		goto out;
+	}
 
 	if (dev->driver_type == RC_DRIVER_IR_RAW)
 		ir_raw_load_modules(&new_protocols);
@@ -1903,9 +1910,8 @@ int rc_register_device(struct rc_dev *dev)
 
 	dev->registered = true;
 
-	IR_dprintk(1, "Registered rc%u (driver: %s)\n",
-		   dev->minor,
-		   dev->driver_name ? dev->driver_name : "unknown");
+	dev_dbg(&dev->dev, "Registered rc%u (driver: %s)\n", dev->minor,
+		dev->driver_name ? dev->driver_name : "unknown");
 
 	return 0;
 
