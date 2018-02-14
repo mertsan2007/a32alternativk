@@ -111,33 +111,8 @@ int ir_raw_event_store_edge(struct rc_dev *dev, bool pulse)
 	ev.duration = ktime_to_ns(ktime_sub(now, dev->raw->last_event));
 	ev.pulse = !pulse;
 
-	return ir_raw_event_store_with_timeout(dev, &ev);
-}
-EXPORT_SYMBOL_GPL(ir_raw_event_store_edge);
-
-/*
- * ir_raw_event_store_with_timeout() - pass a pulse/space duration to the raw
- *				       ir decoders, schedule decoding and
- *				       timeout
- * @dev:	the struct rc_dev device descriptor
- * @ev:		the struct ir_raw_event descriptor of the pulse/space
- *
- * This routine (which may be called from an interrupt context) stores a
- * pulse/space duration for the raw ir decoding state machines, schedules
- * decoding and generates a timeout.
- */
-int ir_raw_event_store_with_timeout(struct rc_dev *dev, struct ir_raw_event *ev)
-{
-	ktime_t		now;
-	int		rc = 0;
-
-	if (!dev->raw)
-		return -EINVAL;
-
-	now = ktime_get();
-
 	spin_lock(&dev->raw->edge_spinlock);
-	rc = ir_raw_event_store(dev, ev);
+	rc = ir_raw_event_store(dev, &ev);
 
 	dev->raw->last_event = now;
 
@@ -541,11 +516,23 @@ int ir_raw_encode_scancode(enum rc_proto protocol, u32 scancode,
 }
 EXPORT_SYMBOL(ir_raw_encode_scancode);
 
-static void edge_handle(struct timer_list *t)
+/**
+ * ir_raw_edge_handle() - Handle ir_raw_event_store_edge() processing
+ *
+ * @t:		timer_list
+ *
+ * This callback is armed by ir_raw_event_store_edge(). It does two things:
+ * first of all, rather than calling ir_raw_event_handle() for each
+ * edge and waking up the rc thread, 15 ms after the first edge
+ * ir_raw_event_handle() is called. Secondly, generate a timeout event
+ * no more IR is received after the rc_dev timeout.
+ */
+static void ir_raw_edge_handle(struct timer_list *t)
 {
 	struct ir_raw_event_ctrl *raw = from_timer(raw, t, edge_handle);
 	struct rc_dev *dev = raw->dev;
-	ktime_t interval = ktime_sub(ktime_get(), dev->raw->last_event);
+	unsigned long flags;
+	ktime_t interval;
 
 	spin_lock_irqsave(&dev->raw->edge_spinlock, flags);
 	interval = ktime_sub(ktime_get(), dev->raw->last_event);
@@ -610,7 +597,8 @@ int ir_raw_event_prepare(struct rc_dev *dev)
 
 	dev->raw->dev = dev;
 	dev->change_protocol = change_protocol;
-	timer_setup(&dev->raw->edge_handle, edge_handle, 0);
+	spin_lock_init(&dev->raw->edge_spinlock);
+	timer_setup(&dev->raw->edge_handle, ir_raw_edge_handle, 0);
 	INIT_KFIFO(dev->raw->kfifo);
 
 	return 0;
