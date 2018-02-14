@@ -2866,7 +2866,8 @@ static struct rt6_info *ip6_route_info_create(struct fib6_config *cfg,
 					   &lwtstate, extack);
 		if (err)
 			goto out;
-		rt->fib6_nh.nh_lwtstate = lwtstate_get(lwtstate);
+		rt->dst.lwtstate = lwtstate_get(lwtstate);
+		lwtunnel_set_redirect(&rt->dst);
 	}
 
 	ipv6_addr_prefix(&rt->fib6_dst.addr, &cfg->fc_dst, cfg->fc_dst_len);
