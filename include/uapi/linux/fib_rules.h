@@ -23,8 +23,8 @@ struct fib_rule_hdr {
 	__u8		tos;
 
 	__u8		table;
-	__u8		proto;
-	__u8		res1;	/* reserved */
+	__u8		res1;   /* reserved */
+	__u8		res2;	/* reserved */
 	__u8		action;
 
 	__u32		flags;
@@ -64,9 +64,6 @@ enum {
 	FRA_L3MDEV,	/* iif or oif is l3mdev goto its table */
 	FRA_UID_RANGE,	/* UID range */
 	FRA_PROTOCOL,   /* Originator of the rule */
-	FRA_IP_PROTO,	/* ip proto */
-	FRA_SPORT_RANGE, /* sport */
-	FRA_DPORT_RANGE, /* dport */
 	__FRA_MAX
 };
 

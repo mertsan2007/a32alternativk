@@ -501,7 +501,6 @@ int fib_nl_newrule(struct sk_buff *skb, struct nlmsghdr *nlh,
 	}
 	refcount_set(&rule->refcnt, 1);
 	rule->fr_net = net;
-	rule->proto = frh->proto;
 
 	rule->pref = tb[FRA_PRIORITY] ? nla_get_u32(tb[FRA_PRIORITY])
 	                              : fib_default_rule_pref(ops);
@@ -737,7 +736,8 @@ int fib_nl_delrule(struct sk_buff *skb, struct nlmsghdr *nlh,
 	}
 
 	list_for_each_entry(rule, &ops->rules_list, list) {
-		if (frh->proto && (frh->proto != rule->proto))
+		if (tb[FRA_PROTOCOL] &&
+		    (rule->proto != nla_get_u8(tb[FRA_PROTOCOL])))
 			continue;
 
 		if (frh->action && (frh->action != rule->action))
@@ -870,10 +870,7 @@ static inline size_t fib_rule_nlmsg_size(struct fib_rules_ops *ops,
 			 + nla_total_size(4) /* FRA_FWMASK */
 			 + nla_total_size_64bit(8) /* FRA_TUN_ID */
 			 + nla_total_size(sizeof(struct fib_kuid_range))
-			 + nla_total_size(1) /* FRA_PROTOCOL */
-			 + nla_total_size(1) /* FRA_IP_PROTO */
-			 + nla_total_size(sizeof(struct fib_rule_port_range)) /* FRA_SPORT_RANGE */
-			 + nla_total_size(sizeof(struct fib_rule_port_range)); /* FRA_DPORT_RANGE */
+			 + nla_total_size(1); /* FRA_PROTOCOL */
 
 	if (ops->nlmsg_payload)
 		payload += ops->nlmsg_payload(rule);
@@ -900,9 +897,12 @@ static int fib_nl_fill_rule(struct sk_buff *skb, struct fib_rule *rule,
 	if (nla_put_u32(skb, FRA_SUPPRESS_PREFIXLEN, rule->suppress_prefixlen))
 		goto nla_put_failure;
 	frh->res1 = 0;
+	frh->res2 = 0;
 	frh->action = rule->action;
 	frh->flags = rule->flags;
-	frh->proto = rule->proto;
+
+	if (nla_put_u8(skb, FRA_PROTOCOL, rule->proto))
+		goto nla_put_failure;
 
 	if (nla_put_u8(skb, FRA_PROTOCOL, rule->proto))
 		goto nla_put_failure;
