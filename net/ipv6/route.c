@@ -468,23 +468,7 @@ struct fib6_info *fib6_multipath_select(const struct net *net,
 	 * case it will always be non-zero. Otherwise now is the time to do it.
 	 */
 	if (!fl6->mp_hash)
-		fl6->mp_hash = rt6_multipath_hash(net, fl6, skb, NULL);
-
-	if (fl6->mp_hash <= atomic_read(&match->fib6_nh.nh_upper_bound))
-		return match;
-
-	list_for_each_entry_safe(sibling, next_sibling, &match->fib6_siblings,
-				 fib6_siblings) {
-		int nh_upper_bound;
-
-		nh_upper_bound = atomic_read(&sibling->fib6_nh.nh_upper_bound);
-		if (fl6->mp_hash > nh_upper_bound)
-			continue;
-		if (rt6_score_route(sibling, oif, strict) < 0)
-			break;
-		match = sibling;
-		break;
-	}
+		fl6->mp_hash = rt6_multipath_hash(fl6, NULL, NULL);
 
 	if (fl6->mp_hash <= atomic_read(&match->rt6i_nh_upper_bound))
 		return match;
@@ -2019,14 +2003,14 @@ out:
 }
 
 /* if skb is set it will be used and fl6 can be NULL */
-u32 rt6_multipath_hash(const struct net *net, const struct flowi6 *fl6,
-		       const struct sk_buff *skb, struct flow_keys *flkeys)
+u32 rt6_multipath_hash(const struct flowi6 *fl6, const struct sk_buff *skb,
+		       struct flow_keys *flkeys)
 {
 	struct flow_keys hash_keys;
 	u32 mhash;
 
 	if (skb) {
-		ip6_multipath_l3_keys(skb, &hash_keys);
+		ip6_multipath_l3_keys(skb, &hash_keys, flkeys);
 		return flow_hash_from_keys(&hash_keys) >> 1;
 	}
 	mhash = flow_hash_from_keys(&hash_keys);
@@ -2058,7 +2042,7 @@ void ip6_route_input(struct sk_buff *skb)
 		flkeys = &_flkeys;
 
 	if (unlikely(fl6.flowi6_proto == IPPROTO_ICMPV6))
-		fl6.mp_hash = rt6_multipath_hash(net, &fl6, skb, flkeys);
+		fl6.mp_hash = rt6_multipath_hash(&fl6, skb, flkeys);
 	skb_dst_drop(skb);
 	skb_dst_set(skb,
 		    ip6_route_input_lookup(net, skb->dev, &fl6, skb, flags));
