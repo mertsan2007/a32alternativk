@@ -870,7 +870,10 @@ static inline size_t fib_rule_nlmsg_size(struct fib_rules_ops *ops,
 			 + nla_total_size(4) /* FRA_FWMASK */
 			 + nla_total_size_64bit(8) /* FRA_TUN_ID */
 			 + nla_total_size(sizeof(struct fib_kuid_range))
-			 + nla_total_size(1); /* FRA_PROTOCOL */
+			 + nla_total_size(1) /* FRA_PROTOCOL */
+			 + nla_total_size(1) /* FRA_IP_PROTO */
+			 + nla_total_size(sizeof(struct fib_rule_port_range)) /* FRA_SPORT_RANGE */
+			 + nla_total_size(sizeof(struct fib_rule_port_range)); /* FRA_DPORT_RANGE */
 
 	if (ops->nlmsg_payload)
 		payload += ops->nlmsg_payload(rule);

@@ -27,7 +27,7 @@ struct fib_rule {
 	u8			action;
 	u8			l3mdev;
 	u8                      proto;
-	/* 1 byte hole, try to use */
+	u8			ip_proto;
 	u32			target;
 	__be64			tun_id;
 	struct fib_rule __rcu	*ctarget;
