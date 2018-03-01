@@ -3592,6 +3592,8 @@ BPF_CALL_4(bpf_skb_set_tunnel_key, struct sk_buff *, skb,
 		info->key.tun_flags |= TUNNEL_DONT_FRAGMENT;
 	if (flags & BPF_F_ZERO_CSUM_TX)
 		info->key.tun_flags &= ~TUNNEL_CSUM;
+	if (flags & BPF_F_SEQ_NUMBER)
+		info->key.tun_flags |= TUNNEL_SEQ;
 
 	info->key.tun_id = cpu_to_be64(from->tunnel_id);
 	info->key.tos = from->tunnel_tos;
