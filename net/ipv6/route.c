@@ -456,11 +456,10 @@ static bool rt6_check_expired(const struct rt6_info *rt)
 	return false;
 }
 
-struct fib6_info *fib6_multipath_select(const struct net *net,
-					struct fib6_info *match,
-					struct flowi6 *fl6, int oif,
-					const struct sk_buff *skb,
-					int strict)
+static struct rt6_info *rt6_multipath_select(struct rt6_info *match,
+					     struct flowi6 *fl6, int oif,
+					     const struct sk_buff *skb,
+					     int strict)
 {
 	struct rt6_info *sibling, *next_sibling;
 
@@ -468,7 +467,7 @@ struct fib6_info *fib6_multipath_select(const struct net *net,
 	 * case it will always be non-zero. Otherwise now is the time to do it.
 	 */
 	if (!fl6->mp_hash)
-		fl6->mp_hash = rt6_multipath_hash(fl6, NULL, NULL);
+		fl6->mp_hash = rt6_multipath_hash(fl6, skb, NULL);
 
 	if (fl6->mp_hash <= atomic_read(&match->rt6i_nh_upper_bound))
 		return match;
@@ -1092,8 +1091,8 @@ restart:
 		rt = rt6_device_match(net, rt, &fl6->saddr,
 				      fl6->flowi6_oif, flags);
 		if (rt->rt6i_nsiblings && fl6->flowi6_oif == 0)
-			rt = rt6_multipath_select(rt, fl6,
-						  fl6->flowi6_oif, flags);
+			rt = rt6_multipath_select(rt, fl6, fl6->flowi6_oif,
+						  skb, flags);
 	}
 	if (rt == net->ipv6.ip6_null_entry) {
 		fn = fib6_backtrack(fn, &fl6->saddr);
@@ -1803,7 +1802,8 @@ void rt6_age_exceptions(struct rt6_info *rt,
 }
 
 struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
-			       int oif, struct flowi6 *fl6, int flags)
+			       int oif, struct flowi6 *fl6,
+			       const struct sk_buff *skb, int flags)
 {
 	struct fib6_node *fn, *saved_fn;
 	struct rt6_info *rt, *rt_cache;
@@ -1825,7 +1825,7 @@ struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
 redo_rt6_select:
 	rt = rt6_select(net, fn, oif, strict);
 	if (rt->rt6i_nsiblings)
-		rt = rt6_multipath_select(rt, fl6, oif, strict);
+		rt = rt6_multipath_select(rt, fl6, oif, skb, strict);
 	if (rt == net->ipv6.ip6_null_entry) {
 		fn = fib6_backtrack(fn, &fl6->saddr);
 		if (fn)
@@ -2757,7 +2757,7 @@ static struct rt6_info *ip6_nh_lookup_table(struct net *net,
 		flags |= RT6_LOOKUP_F_HAS_SADDR;
 
 	flags |= RT6_LOOKUP_F_IGNORE_LINKSTATE;
-	rt = ip6_pol_route(net, table, cfg->fc_ifindex, &fl6, flags);
+	rt = ip6_pol_route(net, table, cfg->fc_ifindex, &fl6, NULL, flags);
 
 	/* if table lookup failed, fall back to full lookup */
 	if (rt == net->ipv6.ip6_null_entry) {
@@ -2793,7 +2793,7 @@ static int ip6_route_check_nh(struct net *net,
 	}
 
 	if (!grt)
-		grt = rt6_lookup(net, gw_addr, NULL, cfg->fc_ifindex, 1);
+		grt = rt6_lookup(net, gw_addr, NULL, cfg->fc_ifindex, NULL, 1);
 
 	if (!grt)
 		goto out;
