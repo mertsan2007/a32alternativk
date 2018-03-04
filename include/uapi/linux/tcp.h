@@ -247,13 +247,7 @@ enum {
 	TCP_NLA_RECUR_RETRANS,  /* Recurring retransmits for the current pkt */
 	TCP_NLA_DELIVERY_RATE_APP_LMT, /* delivery rate application limited ? */
 	TCP_NLA_SNDQ_SIZE,	/* Data (bytes) pending in send queue */
-	TCP_NLA_CA_STATE,	/* ca_state of socket */
-	TCP_NLA_SND_SSTHRESH,	/* Slow start size threshold */
-	TCP_NLA_DELIVERED,	/* Data pkts delivered incl. out-of-order */
-	TCP_NLA_DELIVERED_CE,	/* Like above but only ones w/ CE marks */
-	TCP_NLA_BYTES_SENT,	/* Data bytes sent including retransmission */
-	TCP_NLA_BYTES_RETRANS,	/* Data bytes retransmitted */
-	TCP_NLA_DSACK_DUPS,	/* DSACK blocks received */
+
 };
 
 /* for TCP_MD5SIG socket option */
