@@ -1949,7 +1949,7 @@ static struct rc_dev *imon_init_rdev(struct imon_context *ictx)
 
 	rdev->priv = ictx;
 	/* iMON PAD or MCE */
-	rdev->allowed_protocols = RC_PROTO_BIT_OTHER | RC_PROTO_BIT_RC6_MCE;
+	rdev->allowed_protocols = RC_PROTO_BIT_IMON | RC_PROTO_BIT_RC6_MCE;
 	rdev->change_protocol = imon_ir_change_protocol;
 	rdev->driver_name = MOD_NAME;
 
