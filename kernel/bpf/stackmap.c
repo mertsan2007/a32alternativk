@@ -8,7 +8,6 @@
 #include <linux/perf_event.h>
 #include <linux/elf.h>
 #include <linux/pagemap.h>
-#include <linux/irq_work.h>
 #include "percpu_freelist.h"
 
 #define STACK_CREATE_FLAG_MASK					\
@@ -29,23 +28,6 @@ struct bpf_stack_map {
 	u32 n_buckets;
 	struct stack_map_bucket *buckets[];
 };
-
-/* irq_work to run up_read() for build_id lookup in nmi context */
-struct stack_map_irq_work {
-	struct irq_work irq_work;
-	struct rw_semaphore *sem;
-};
-
-static void do_up_read(struct irq_work *entry)
-{
-	struct stack_map_irq_work *work;
-
-	work = container_of(entry, struct stack_map_irq_work, irq_work);
-	up_read_non_owner(work->sem);
-	work->sem = NULL;
-}
-
-static DEFINE_PER_CPU(struct stack_map_irq_work, up_read_work);
 
 static inline bool stack_map_use_build_id(struct bpf_map *map)
 {
@@ -186,14 +168,11 @@ static inline int stack_map_parse_build_id(void *page_addr,
 
 		if (nhdr->n_type == BPF_BUILD_ID &&
 		    nhdr->n_namesz == sizeof("GNU") &&
-		    nhdr->n_descsz > 0 &&
-		    nhdr->n_descsz <= BPF_BUILD_ID_SIZE) {
+		    nhdr->n_descsz == BPF_BUILD_ID_SIZE) {
 			memcpy(build_id,
 			       note_start + note_offs +
 			       ALIGN(sizeof("GNU"), 4) + sizeof(Elf32_Nhdr),
-			       nhdr->n_descsz);
-			memset(build_id + nhdr->n_descsz, 0,
-			       BPF_BUILD_ID_SIZE - nhdr->n_descsz);
+			       BPF_BUILD_ID_SIZE);
 			return 0;
 		}
 		new_offs = note_offs + sizeof(Elf32_Nhdr) +
@@ -269,7 +248,7 @@ static int stack_map_get_build_id(struct vm_area_struct *vma,
 		return -EFAULT;	/* page not mapped */
 
 	ret = -EINVAL;
-	page_addr = kmap_atomic(page);
+	page_addr = page_address(page);
 	ehdr = (Elf32_Ehdr *)page_addr;
 
 	/* compare magic x7f "ELF" */
@@ -285,43 +264,36 @@ static int stack_map_get_build_id(struct vm_area_struct *vma,
 	else if (ehdr->e_ident[EI_CLASS] == ELFCLASS64)
 		ret = stack_map_get_build_id_64(page_addr, build_id);
 out:
-	kunmap_atomic(page_addr);
 	put_page(page);
 	return ret;
 }
 
-static void stack_map_get_build_id_offset(struct bpf_stack_build_id *id_offs,
+static void stack_map_get_build_id_offset(struct bpf_map *map,
+					  struct stack_map_bucket *bucket,
 					  u64 *ips, u32 trace_nr, bool user)
 {
 	int i;
 	struct vm_area_struct *vma;
-	bool irq_work_busy = false;
-	struct stack_map_irq_work *work = NULL;
+	struct bpf_stack_build_id *id_offs;
 
-	if (irqs_disabled()) {
-		work = this_cpu_ptr(&up_read_work);
-		if (work->irq_work.flags & IRQ_WORK_BUSY)
-			/* cannot queue more up_read, fallback */
-			irq_work_busy = true;
-	}
+	bucket->nr = trace_nr;
+	id_offs = (struct bpf_stack_build_id *)bucket->data;
 
 	/*
-	 * We cannot do up_read() when the irq is disabled, because of
-	 * risk to deadlock with rq_lock. To do build_id lookup when the
-	 * irqs are disabled, we need to run up_read() in irq_work. We use
-	 * a percpu variable to do the irq_work. If the irq_work is
-	 * already used by another lookup, we fall back to report ips.
+	 * We cannot do up_read() in nmi context, so build_id lookup is
+	 * only supported for non-nmi events. If at some point, it is
+	 * possible to run find_vma() without taking the semaphore, we
+	 * would like to allow build_id lookup in nmi context.
 	 *
 	 * Same fallback is used for kernel stack (!user) on a stackmap
 	 * with build_id.
 	 */
-	if (!user || !current || !current->mm || irq_work_busy ||
+	if (!user || !current || !current->mm || in_nmi() ||
 	    down_read_trylock(&current->mm->mmap_sem) == 0) {
 		/* cannot access current->mm, fall back to ips */
 		for (i = 0; i < trace_nr; i++) {
 			id_offs[i].status = BPF_STACK_BUILD_ID_IP;
 			id_offs[i].ip = ips[i];
-			memset(id_offs[i].build_id, 0, BPF_BUILD_ID_SIZE);
 		}
 		return;
 	}
@@ -332,26 +304,13 @@ static void stack_map_get_build_id_offset(struct bpf_stack_build_id *id_offs,
 			/* per entry fall back to ips */
 			id_offs[i].status = BPF_STACK_BUILD_ID_IP;
 			id_offs[i].ip = ips[i];
-			memset(id_offs[i].build_id, 0, BPF_BUILD_ID_SIZE);
 			continue;
 		}
 		id_offs[i].offset = (vma->vm_pgoff << PAGE_SHIFT) + ips[i]
 			- vma->vm_start;
 		id_offs[i].status = BPF_STACK_BUILD_ID_VALID;
 	}
-
-	if (!work) {
-		up_read(&current->mm->mmap_sem);
-	} else {
-		work->sem = &current->mm->mmap_sem;
-		irq_work_queue(&work->irq_work);
-		/*
-		 * The irq_work will release the mmap_sem with
-		 * up_read_non_owner(). The rwsem_release() is called
-		 * here to release the lock from lockdep's perspective.
-		 */
-		rwsem_release(&current->mm->mmap_sem.dep_map, 1, _RET_IP_);
-	}
+	up_read(&current->mm->mmap_sem);
 }
 
 BPF_CALL_3(bpf_get_stackid, struct pt_regs *, regs, struct bpf_map *, map,
@@ -408,10 +367,8 @@ BPF_CALL_3(bpf_get_stackid, struct pt_regs *, regs, struct bpf_map *, map,
 			pcpu_freelist_pop(&smap->freelist);
 		if (unlikely(!new_bucket))
 			return -ENOMEM;
-		new_bucket->nr = trace_nr;
-		stack_map_get_build_id_offset(
-			(struct bpf_stack_build_id *)new_bucket->data,
-			ips, trace_nr, user);
+		stack_map_get_build_id_offset(map, new_bucket, ips,
+					      trace_nr, user);
 		trace_len = trace_nr * sizeof(struct bpf_stack_build_id);
 		if (hash_matches && bucket->nr == trace_nr &&
 		    memcmp(bucket->data, new_bucket->data, trace_len) == 0) {
