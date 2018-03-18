@@ -21,6 +21,7 @@ struct bpf_verifier_env;
 struct perf_event;
 struct bpf_prog;
 struct bpf_map;
+struct sock;
 
 extern struct idr btf_idr;
 extern spinlock_t btf_idr_lock;
