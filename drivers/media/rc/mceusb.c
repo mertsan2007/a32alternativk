@@ -234,6 +234,11 @@ static const struct mceusb_model mceusb_model[] = {
 		.tx_mask_normal = 1,
 		.rx2 = 1,
 	},
+	[MCE_GEN2_TX_INV_RX_GOOD] = {
+		.mce_gen2 = 1,
+		.tx_mask_normal = 1,
+		.rx2 = 2,
+	},
 	[MCE_GEN3] = {
 		.mce_gen3 = 1,
 		.tx_mask_normal = 1,
