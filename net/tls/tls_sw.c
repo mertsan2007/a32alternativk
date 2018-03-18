@@ -109,7 +109,7 @@ static int alloc_encrypted_sg(struct sock *sk, int len)
 	struct sk_msg *msg_en = &rec->msg_encrypted;
 
 	rc = sk_alloc_sg(sk, len,
-			 ctx->sg_encrypted_data,
+			 ctx->sg_encrypted_data, 0,
 			 &ctx->sg_encrypted_num_elem,
 			 &ctx->sg_encrypted_size, 0);
 
@@ -125,7 +125,7 @@ static int tls_clone_plaintext_msg(struct sock *sk, int required)
 	struct sk_msg *msg_en = &rec->msg_encrypted;
 	int skip, len;
 
-	rc = sk_alloc_sg(sk, len, ctx->sg_plaintext_data,
+	rc = sk_alloc_sg(sk, len, ctx->sg_plaintext_data, 0,
 			 &ctx->sg_plaintext_num_elem, &ctx->sg_plaintext_size,
 			 tls_ctx->pending_open_record_frags);
 
