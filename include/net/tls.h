@@ -179,6 +179,16 @@ enum {
 	TLS_PENDING_CLOSED_RECORD
 };
 
+struct cipher_context {
+	u16 prepend_size;
+	u16 tag_size;
+	u16 overhead_size;
+	u16 iv_size;
+	char *iv;
+	u16 rec_seq_size;
+	char *rec_seq;
+};
+
 struct tls_context {
 	union {
 		struct tls_crypto_info crypto_send;
@@ -191,13 +201,7 @@ struct tls_context {
 
 	u8 tx_conf:2;
 
-	u16 prepend_size;
-	u16 tag_size;
-	u16 overhead_size;
-	u16 iv_size;
-	char *iv;
-	u16 rec_seq_size;
-	char *rec_seq;
+	struct cipher_context tx;
 
 	struct scatterlist *partially_sent_record;
 	u16 partially_sent_offset;
@@ -337,21 +341,6 @@ static inline void tls_fill_prepend(struct tls_context *ctx,
 	buf[4] = pkt_len & 0xFF;
 	memcpy(buf + TLS_NONCE_OFFSET,
 	       ctx->tx.iv + TLS_CIPHER_AES_GCM_128_SALT_SIZE, iv_size);
-}
-
-static inline void tls_make_aad(char *buf,
-				size_t size,
-				char *record_sequence,
-				int record_sequence_size,
-				unsigned char record_type)
-{
-	memcpy(buf, record_sequence, record_sequence_size);
-
-	buf[8] = record_type;
-	buf[9] = TLS_1_2_VERSION_MAJOR;
-	buf[10] = TLS_1_2_VERSION_MINOR;
-	buf[11] = size >> 8;
-	buf[12] = size & 0xFF;
 }
 
 static inline void tls_make_aad(char *buf,
