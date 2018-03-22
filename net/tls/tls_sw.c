@@ -508,364 +508,13 @@ static int tls_sw_push_pending_record(struct sock *sk, int flags)
 				   &copied, flags);
 }
 
-int tls_sw_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
+static int zerocopy_from_iter(struct sock *sk, struct iov_iter *from,
+			      int length, int *pages_used,
+			      unsigned int *size_used,
+			      struct scatterlist *to, int to_max_pages,
+			      bool charge)
 {
-	long timeo = sock_sndtimeo(sk, msg->msg_flags & MSG_DONTWAIT);
-	struct tls_context *tls_ctx = tls_get_ctx(sk);
-	struct tls_sw_context_tx *ctx = tls_sw_ctx_tx(tls_ctx);
-	struct crypto_tfm *tfm = crypto_aead_tfm(ctx->aead_send);
-	bool async_capable = tfm->__crt_alg->cra_flags & CRYPTO_ALG_ASYNC;
-	unsigned char record_type = TLS_RECORD_TYPE_DATA;
-	bool is_kvec = msg->msg_iter.type & ITER_KVEC;
-	bool eor = !(msg->msg_flags & MSG_MORE);
-	size_t try_to_copy, copied = 0;
-	struct sk_msg *msg_pl, *msg_en;
-	struct tls_rec *rec;
-	int required_size;
-	int num_async = 0;
-	bool full_record;
-	int record_room;
-	int num_zc = 0;
-	int orig_size;
-	int ret = 0;
-
-	if (msg->msg_flags & ~(MSG_MORE | MSG_DONTWAIT | MSG_NOSIGNAL))
-		return -ENOTSUPP;
-
-	lock_sock(sk);
-
-	/* Wait till there is any pending write on socket */
-	if (unlikely(sk->sk_write_pending)) {
-		ret = wait_on_pending_writer(sk, &timeo);
-		if (unlikely(ret))
-			goto send_end;
-	}
-
-	if (unlikely(msg->msg_controllen)) {
-		ret = tls_proccess_cmsg(sk, msg, &record_type);
-		if (ret) {
-			if (ret == -EINPROGRESS)
-				num_async++;
-			else if (ret != -EAGAIN)
-				goto send_end;
-		}
-	}
-
-	while (msg_data_left(msg)) {
-		if (sk->sk_err) {
-			ret = -sk->sk_err;
-			goto send_end;
-		}
-
-		if (ctx->open_rec)
-			rec = ctx->open_rec;
-		else
-			rec = ctx->open_rec = tls_get_rec(sk);
-		if (!rec) {
-			ret = -ENOMEM;
-			goto send_end;
-		}
-
-		msg_pl = &rec->msg_plaintext;
-		msg_en = &rec->msg_encrypted;
-
-		orig_size = msg_pl->sg.size;
-		full_record = false;
-		try_to_copy = msg_data_left(msg);
-		record_room = TLS_MAX_PAYLOAD_SIZE - msg_pl->sg.size;
-		if (try_to_copy >= record_room) {
-			try_to_copy = record_room;
-			full_record = true;
-		}
-
-		required_size = msg_pl->sg.size + try_to_copy +
-				tls_ctx->tx.overhead_size;
-
-		if (!sk_stream_memory_free(sk))
-			goto wait_for_sndbuf;
-
-alloc_encrypted:
-		ret = tls_alloc_encrypted_msg(sk, required_size);
-		if (ret) {
-			if (ret != -ENOSPC)
-				goto wait_for_memory;
-
-			/* Adjust try_to_copy according to the amount that was
-			 * actually allocated. The difference is due
-			 * to max sg elements limit
-			 */
-			try_to_copy -= required_size - msg_en->sg.size;
-			full_record = true;
-		}
-
-		if (!is_kvec && (full_record || eor) && !async_capable) {
-			u32 first = msg_pl->sg.end;
-
-			ret = sk_msg_zerocopy_from_iter(sk, &msg->msg_iter,
-							msg_pl, try_to_copy);
-			if (ret)
-				goto fallback_to_reg_send;
-
-			rec->inplace_crypto = 0;
-
-			num_zc++;
-			copied += try_to_copy;
-
-			sk_msg_sg_copy_set(msg_pl, first);
-			ret = bpf_exec_tx_verdict(msg_pl, sk, full_record,
-						  record_type, &copied,
-						  msg->msg_flags);
-			if (ret) {
-				if (ret == -EINPROGRESS)
-					num_async++;
-				else if (ret == -ENOMEM)
-					goto wait_for_memory;
-				else if (ret == -ENOSPC)
-					goto rollback_iter;
-				else if (ret != -EAGAIN)
-					goto send_end;
-			}
-			continue;
-rollback_iter:
-			copied -= try_to_copy;
-			sk_msg_sg_copy_clear(msg_pl, first);
-			iov_iter_revert(&msg->msg_iter,
-					msg_pl->sg.size - orig_size);
-fallback_to_reg_send:
-			sk_msg_trim(sk, msg_pl, orig_size);
-		}
-
-		required_size = msg_pl->sg.size + try_to_copy;
-
-		ret = tls_clone_plaintext_msg(sk, required_size);
-		if (ret) {
-			if (ret != -ENOSPC)
-				goto send_end;
-
-			/* Adjust try_to_copy according to the amount that was
-			 * actually allocated. The difference is due
-			 * to max sg elements limit
-			 */
-			try_to_copy -= required_size - msg_pl->sg.size;
-			full_record = true;
-			sk_msg_trim(sk, msg_en, msg_pl->sg.size +
-				    tls_ctx->tx.overhead_size);
-		}
-
-		ret = sk_msg_memcopy_from_iter(sk, &msg->msg_iter, msg_pl,
-					       try_to_copy);
-		if (ret < 0)
-			goto trim_sgl;
-
-		/* Open records defined only if successfully copied, otherwise
-		 * we would trim the sg but not reset the open record frags.
-		 */
-		tls_ctx->pending_open_record_frags = true;
-		copied += try_to_copy;
-		if (full_record || eor) {
-			ret = bpf_exec_tx_verdict(msg_pl, sk, full_record,
-						  record_type, &copied,
-						  msg->msg_flags);
-			if (ret) {
-				if (ret == -EINPROGRESS)
-					num_async++;
-				else if (ret == -ENOMEM)
-					goto wait_for_memory;
-				else if (ret != -EAGAIN) {
-					if (ret == -ENOSPC)
-						ret = 0;
-					goto send_end;
-				}
-			}
-		}
-
-		continue;
-
-wait_for_sndbuf:
-		set_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
-wait_for_memory:
-		ret = sk_stream_wait_memory(sk, &timeo);
-		if (ret) {
-trim_sgl:
-			tls_trim_both_msgs(sk, orig_size);
-			goto send_end;
-		}
-
-		if (msg_en->sg.size < required_size)
-			goto alloc_encrypted;
-	}
-
-	if (!num_async) {
-		goto send_end;
-	} else if (num_zc) {
-		/* Wait for pending encryptions to get completed */
-		smp_store_mb(ctx->async_notify, true);
-
-		if (atomic_read(&ctx->encrypt_pending))
-			crypto_wait_req(-EINPROGRESS, &ctx->async_wait);
-		else
-			reinit_completion(&ctx->async_wait.completion);
-
-		WRITE_ONCE(ctx->async_notify, false);
-
-		if (ctx->async_wait.err) {
-			ret = ctx->async_wait.err;
-			copied = 0;
-		}
-	}
-
-	/* Transmit if any encryptions have completed */
-	if (test_and_clear_bit(BIT_TX_SCHEDULED, &ctx->tx_bitmask)) {
-		cancel_delayed_work(&ctx->tx_work.work);
-		tls_tx_records(sk, msg->msg_flags);
-	}
-
-send_end:
-	ret = sk_stream_error(sk, msg->msg_flags, ret);
-
-	release_sock(sk);
-	return copied ? copied : ret;
-}
-
-int tls_sw_sendpage(struct sock *sk, struct page *page,
-		    int offset, size_t size, int flags)
-{
-	long timeo = sock_sndtimeo(sk, flags & MSG_DONTWAIT);
-	struct tls_context *tls_ctx = tls_get_ctx(sk);
-	struct tls_sw_context_tx *ctx = tls_sw_ctx_tx(tls_ctx);
-	unsigned char record_type = TLS_RECORD_TYPE_DATA;
-	struct sk_msg *msg_pl;
-	struct tls_rec *rec;
-	int num_async = 0;
-	size_t copied = 0;
-	bool full_record;
-	int record_room;
-	int ret = 0;
-	bool eor;
-
-	if (flags & ~(MSG_MORE | MSG_DONTWAIT | MSG_NOSIGNAL |
-		      MSG_SENDPAGE_NOTLAST))
-		return -ENOTSUPP;
-
-	/* No MSG_EOR from splice, only look at MSG_MORE */
-	eor = !(flags & (MSG_MORE | MSG_SENDPAGE_NOTLAST));
-
-	lock_sock(sk);
-
-	sk_clear_bit(SOCKWQ_ASYNC_NOSPACE, sk);
-
-	/* Wait till there is any pending write on socket */
-	if (unlikely(sk->sk_write_pending)) {
-		ret = wait_on_pending_writer(sk, &timeo);
-		if (unlikely(ret))
-			goto sendpage_end;
-	}
-
-	/* Call the sk_stream functions to manage the sndbuf mem. */
-	while (size > 0) {
-		size_t copy, required_size;
-
-		if (sk->sk_err) {
-			ret = -sk->sk_err;
-			goto sendpage_end;
-		}
-
-		if (ctx->open_rec)
-			rec = ctx->open_rec;
-		else
-			rec = ctx->open_rec = tls_get_rec(sk);
-		if (!rec) {
-			ret = -ENOMEM;
-			goto sendpage_end;
-		}
-
-		msg_pl = &rec->msg_plaintext;
-
-		full_record = false;
-		record_room = TLS_MAX_PAYLOAD_SIZE - msg_pl->sg.size;
-		copied = 0;
-		copy = size;
-		if (copy >= record_room) {
-			copy = record_room;
-			full_record = true;
-		}
-
-		required_size = msg_pl->sg.size + copy +
-				tls_ctx->tx.overhead_size;
-
-		if (!sk_stream_memory_free(sk))
-			goto wait_for_sndbuf;
-alloc_payload:
-		ret = tls_alloc_encrypted_msg(sk, required_size);
-		if (ret) {
-			if (ret != -ENOSPC)
-				goto wait_for_memory;
-
-			/* Adjust copy according to the amount that was
-			 * actually allocated. The difference is due
-			 * to max sg elements limit
-			 */
-			copy -= required_size - msg_pl->sg.size;
-			full_record = true;
-		}
-
-		sk_msg_page_add(msg_pl, page, copy, offset);
-		sk_mem_charge(sk, copy);
-
-		offset += copy;
-		size -= copy;
-		copied += copy;
-
-		tls_ctx->pending_open_record_frags = true;
-		if (full_record || eor || sk_msg_full(msg_pl)) {
-			rec->inplace_crypto = 0;
-			ret = bpf_exec_tx_verdict(msg_pl, sk, full_record,
-						  record_type, &copied, flags);
-			if (ret) {
-				if (ret == -EINPROGRESS)
-					num_async++;
-				else if (ret == -ENOMEM)
-					goto wait_for_memory;
-				else if (ret != -EAGAIN) {
-					if (ret == -ENOSPC)
-						ret = 0;
-					goto sendpage_end;
-				}
-			}
-		}
-		continue;
-wait_for_sndbuf:
-		set_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
-wait_for_memory:
-		ret = sk_stream_wait_memory(sk, &timeo);
-		if (ret) {
-			tls_trim_both_msgs(sk, msg_pl->sg.size);
-			goto sendpage_end;
-		}
-
-		goto alloc_payload;
-	}
-
-	if (num_async) {
-		/* Transmit if any encryptions have completed */
-		if (test_and_clear_bit(BIT_TX_SCHEDULED, &ctx->tx_bitmask)) {
-			cancel_delayed_work(&ctx->tx_work.work);
-			tls_tx_records(sk, flags);
-		}
-	}
-sendpage_end:
-	ret = sk_stream_error(sk, flags, ret);
-	release_sock(sk);
-	return copied ? copied : ret;
-}
-
-static struct sk_buff *tls_wait_data(struct sock *sk, struct sk_psock *psock,
-				     int flags, long timeo, int *err)
-{
-	struct tls_context *tls_ctx = tls_get_ctx(sk);
-	struct tls_sw_context_rx *ctx = tls_sw_ctx_rx(tls_ctx);
-	struct sk_buff *skb;
-	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	struct page *pages[MAX_SKB_FRAGS];
 
 	while (!(skb = ctx->recv_pkt) && sk_psock_queue_empty(psock)) {
 		if (sk->sk_err) {
@@ -919,7 +568,11 @@ static int tls_setup_from_iter(struct sock *sk, struct iov_iter *from,
 	struct page *pages[MAX_SKB_FRAGS];
 	unsigned int size = *size_used;
 	ssize_t copied, use;
-	size_t offset;
+	int i = 0;
+	unsigned int size = *size_used;
+	int num_elem = *pages_used;
+	int rc = 0;
+	int maxpages;
 
 	while (length > 0) {
 		i = 0;
@@ -946,7 +599,8 @@ static int tls_setup_from_iter(struct sock *sk, struct iov_iter *from,
 			sg_set_page(&to[num_elem],
 				    pages[i], use, offset);
 			sg_unmark_end(&to[num_elem]);
-			/* We do not uncharge memory from this API */
+			if (charge)
+				sk_mem_charge(sk, use);
 
 			offset = 0;
 			copied -= use;
@@ -959,8 +613,6 @@ static int tls_setup_from_iter(struct sock *sk, struct iov_iter *from,
 	if (num_elem > *pages_used)
 		sg_mark_end(&to[num_elem - 1]);
 out:
-	if (rc)
-		iov_iter_revert(from, size - *size_used);
 	*size_used = size;
 	*pages_used = num_elem;
 
@@ -1347,7 +999,11 @@ alloc_encrypted:
 
 		if (full_record || eor) {
 			ret = zerocopy_from_iter(sk, &msg->msg_iter,
-						 try_to_copy);
+				try_to_copy, &ctx->sg_plaintext_num_elem,
+				&ctx->sg_plaintext_size,
+				ctx->sg_plaintext_data,
+				ARRAY_SIZE(ctx->sg_plaintext_data),
+				true);
 			if (ret)
 				goto fallback_to_reg_send;
 
