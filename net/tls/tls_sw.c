@@ -447,28 +447,10 @@ static int bpf_exec_tx_verdict(struct sk_msg *msg, struct sock *sk,
 	u32 delta = 0;
 	bool enospc;
 
-	psock = sk_psock_get(sk);
-	if (!psock)
-		return tls_push_record(sk, flags, record_type);
-more_data:
-	enospc = sk_msg_full(msg);
-	if (psock->eval == __SK_NONE) {
-		delta = msg->sg.size;
-		psock->eval = sk_psock_msg_verdict(sk, psock, msg);
-		if (delta < msg->sg.size)
-			delta -= msg->sg.size;
-		else
-			delta = 0;
-	}
-	if (msg->cork_bytes && msg->cork_bytes > msg->sg.size &&
-	    !enospc && !full_record) {
-		err = -ENOSPC;
-		goto out_err;
-	}
-	msg->cork_bytes = 0;
-	send = msg->sg.size;
-	if (msg->apply_bytes && msg->apply_bytes < send)
-		send = msg->apply_bytes;
+	/* Only pass through MSG_DONTWAIT and MSG_NOSIGNAL flags */
+	rc = tls_push_sg(sk, tls_ctx, ctx->sg_encrypted_data, 0, flags);
+	if (rc < 0 && rc != -EAGAIN)
+		tls_err_abort(sk, EBADMSG);
 
 	tls_advance_record_sn(sk, &tls_ctx->tx);
 	return rc;

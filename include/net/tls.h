@@ -293,9 +293,9 @@ static inline bool tls_is_pending_open_record(struct tls_context *tls_ctx)
 	return tls_ctx->pending_open_record_frags;
 }
 
-static inline bool is_tx_ready(struct tls_sw_context_tx *ctx)
+static inline void tls_err_abort(struct sock *sk, int err)
 {
-	sk->sk_err = EBADMSG;
+	sk->sk_err = err;
 	sk->sk_error_report(sk);
 }
 
