@@ -1245,13 +1245,6 @@ static ssize_t store_protocols(struct device *device,
 	if (rc < 0)
 		goto out;
 
-	rc = dev->change_protocol(dev, &new_protocols);
-	if (rc < 0) {
-		dev_dbg(&dev->dev, "Error setting protocols to 0x%llx\n",
-			(long long)new_protocols);
-		goto out;
-	}
-
 	if (dev->driver_type == RC_DRIVER_IR_RAW)
 		ir_raw_load_modules(&new_protocols);
 
@@ -1758,6 +1751,9 @@ static int rc_prepare_rx_device(struct rc_dev *dev)
 
 	if (dev->driver_type == RC_DRIVER_SCANCODE && !dev->change_protocol)
 		dev->enabled_protocols = dev->allowed_protocols;
+
+	if (dev->driver_type == RC_DRIVER_IR_RAW)
+		ir_raw_load_modules(&rc_proto);
 
 	if (dev->change_protocol) {
 		rc = dev->change_protocol(dev, &rc_proto);

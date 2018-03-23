@@ -247,19 +247,6 @@ static int change_protocol(struct rc_dev *dev, u64 *rc_proto)
 	struct ir_raw_handler *handler;
 	u32 timeout = 0;
 
-	mutex_lock(&ir_raw_handler_lock);
-	list_for_each_entry(handler, &ir_raw_handler_list, list) {
-		if (!(dev->enabled_protocols & handler->protocols) &&
-		    (*rc_proto & handler->protocols) && handler->raw_register)
-			handler->raw_register(dev);
-
-		if ((dev->enabled_protocols & handler->protocols) &&
-		    !(*rc_proto & handler->protocols) &&
-		    handler->raw_unregister)
-			handler->raw_unregister(dev);
-	}
-	mutex_unlock(&ir_raw_handler_lock);
-
 	if (!dev->max_timeout)
 		return 0;
 
