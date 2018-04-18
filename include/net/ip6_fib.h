@@ -335,13 +335,7 @@ static inline u32 rt6_get_cookie(const struct rt6_info *rt)
 	u32 cookie = 0;
 
 	if (rt->from)
-		rt = rt->from;
-
-	from = rcu_dereference(rt->from);
-	if (from)
-		fib6_get_cookie_safe(from, &cookie);
-
-	rcu_read_unlock();
+		rt6_get_cookie_safe(rt->from, &cookie);
 
 	return cookie;
 }

@@ -124,6 +124,7 @@ static inline int ip6_route_get_saddr(struct net *net, struct rt6_info *rt,
 				      unsigned int prefs,
 				      struct in6_addr *saddr)
 {
+	struct inet6_dev *idev = rt ? rt->rt6i_idev : NULL;
 	int err = 0;
 
 	if (f6i && f6i->fib6_prefsrc.plen) {
