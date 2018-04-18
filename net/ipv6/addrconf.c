@@ -1083,7 +1083,7 @@ ipv6_add_addr(struct inet6_dev *idev, const struct in6_addr *addr,
 	gfp_t gfp_flags = can_block ? GFP_KERNEL : GFP_ATOMIC;
 	struct net *net = dev_net(idev->dev);
 	struct inet6_ifaddr *ifa = NULL;
-	struct rt6_info *rt = NULL;
+	struct fib6_info *rt = NULL;
 	struct in6_validator_info i6vi;
 	int err = 0;
 	int addr_type = ipv6_addr_type(addr);
@@ -1261,7 +1261,7 @@ check_cleanup_prefix_route(struct inet6_ifaddr *ifp, unsigned long *expires)
 static void
 cleanup_prefix_route(struct inet6_ifaddr *ifp, unsigned long expires, bool del_rt)
 {
-	struct fib6_info *f6i;
+	struct fib6_info *rt;
 
 	f6i = addrconf_get_prefix_route(&ifp->addr,
 				       ifp->prefix_len,
@@ -3451,8 +3451,8 @@ static int fixup_permanent_addr(struct net *net,
 	 * FIB, for example, if 'lo' device is taken down. In that
 	 * case regenerate the host route.
 	 */
-	if (!ifp->rt || !ifp->rt->fib6_node) {
-		struct fib6_info *f6i, *prev;
+	if (!ifp->rt || !ifp->rt->rt6i_node) {
+		struct fib6_info *rt, *prev;
 
 		rt = addrconf_dst_alloc(net, idev, &ifp->addr, false,
 					GFP_ATOMIC);
@@ -6226,7 +6226,7 @@ void addrconf_disable_policy_idev(struct inet6_dev *idev, int val)
 	list_for_each_entry(ifa, &idev->addr_list, if_list) {
 		spin_lock(&ifa->lock);
 		if (ifa->rt) {
-			struct rt6_info *rt = ifa->rt;
+			struct fib6_info *rt = ifa->rt;
 			int cpu;
 
 			rcu_read_lock();
