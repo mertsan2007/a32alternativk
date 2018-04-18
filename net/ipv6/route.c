@@ -184,7 +184,7 @@ static void rt6_uncached_list_flush_dev(struct net *net, struct net_device *dev)
 	}
 }
 
-static inline const void *choose_neigh_daddr(struct rt6_info *rt,
+static inline const void *choose_neigh_daddr(const struct in6_addr *p,
 					     struct sk_buff *skb,
 					     const void *daddr)
 {
