@@ -225,10 +225,6 @@ struct tcp_info {
 
 	__u32	tcpi_delivered;
 	__u32	tcpi_delivered_ce;
-
-	__u64	tcpi_bytes_sent;     /* RFC4898 tcpEStatsPerfHCDataOctetsOut */
-	__u64	tcpi_bytes_retrans;  /* RFC4898 tcpEStatsPerfOctetsRetrans */
-	__u32	tcpi_dsack_dups;     /* RFC4898 tcpEStatsStackDSACKDups */
 };
 
 /* netlink attributes types for SCM_TIMESTAMPING_OPT_STATS */
@@ -249,6 +245,8 @@ enum {
 	TCP_NLA_SNDQ_SIZE,	/* Data (bytes) pending in send queue */
 	TCP_NLA_CA_STATE,	/* ca_state of socket */
 	TCP_NLA_SND_SSTHRESH,	/* Slow start size threshold */
+	TCP_NLA_DELIVERED,	/* Data pkts delivered incl. out-of-order */
+	TCP_NLA_DELIVERED_CE,	/* Like above but only ones w/ CE marks */
 
 };
 
