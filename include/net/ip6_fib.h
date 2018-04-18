@@ -194,7 +194,6 @@ struct fib6_info {
 	struct rt6_exception_bucket __rcu *rt6i_exception_bucket;
 
 	u32				rt6i_metric;
-	u32				rt6i_pmtu;
 	/* more non-fragment space at head required */
 	unsigned short			rt6i_nfheader_len;
 	u8				rt6i_protocol;
@@ -203,6 +202,8 @@ struct fib6_info {
 					should_flush:1,
 					unused:6;
 
+	struct dst_metrics		*fib6_metrics;
+#define fib6_pmtu		fib6_metrics->metrics[RTAX_MTU-1]
 	struct fib6_nh			fib6_nh;
 };
 
@@ -428,9 +429,9 @@ struct fib6_node *fib6_locate(struct fib6_node *root,
 void fib6_clean_all(struct net *net, int (*func)(struct fib6_info *, void *arg),
 		    void *arg);
 
-int fib6_add(struct fib6_node *root, struct fib6_info *rt,
+int fib6_add(struct fib6_node *root, struct rt6_info *rt,
 	     struct nl_info *info, struct netlink_ext_ack *extack);
-int fib6_del(struct fib6_info *rt, struct nl_info *info);
+int fib6_del(struct rt6_info *rt, struct nl_info *info);
 
 static inline struct net_device *fib6_info_nh_dev(const struct fib6_info *f6i)
 {
@@ -468,6 +469,12 @@ int fib6_tables_dump(struct net *net, struct notifier_block *nb);
 
 void fib6_update_sernum(struct net *net, struct rt6_info *rt);
 void fib6_update_sernum_upto_root(struct net *net, struct rt6_info *rt);
+
+void fib6_metric_set(struct rt6_info *f6i, int metric, u32 val);
+static inline bool fib6_metric_locked(struct rt6_info *f6i, int metric)
+{
+	return !!(f6i->fib6_metrics->metrics[RTAX_LOCK - 1] & (1 << metric));
+}
 
 #ifdef CONFIG_IPV6_MULTIPLE_TABLES
 int fib6_rules_init(void);
