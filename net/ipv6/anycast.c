@@ -215,9 +215,10 @@ static void aca_put(struct ifacaddr6 *ac)
 	}
 }
 
-static struct ifacaddr6 *aca_alloc(struct fib6_info *rt,
+static struct ifacaddr6 *aca_alloc(struct fib6_info *f6i,
 				   const struct in6_addr *addr)
 {
+	struct inet6_dev *idev = f6i->fib6_idev;
 	struct ifacaddr6 *aca;
 
 	aca = kzalloc(sizeof(*aca), GFP_ATOMIC);
@@ -227,8 +228,8 @@ static struct ifacaddr6 *aca_alloc(struct fib6_info *rt,
 	aca->aca_addr = *addr;
 	in6_dev_hold(idev);
 	aca->aca_idev = idev;
-	fib6_info_hold(rt);
-	aca->aca_rt = rt;
+	fib6_info_hold(f6i);
+	aca->aca_rt = f6i;
 	aca->aca_users = 1;
 	/* aca_tstamp should be updated upon changes */
 	aca->aca_cstamp = aca->aca_tstamp = jiffies;
