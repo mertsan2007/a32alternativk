@@ -909,17 +909,17 @@ int rt6_route_rcv(struct net_device *dev, u8 *opt, int len,
  */
 
 /* called with rcu_lock held */
-static struct net_device *ip6_rt_get_dev_rcu(struct fib6_info *rt)
+static struct net_device *ip6_rt_get_dev_rcu(struct rt6_info *rt)
 {
-	struct net_device *dev = rt->fib6_nh.nh_dev;
+	struct net_device *dev = rt->dst.dev;
 
-	if (rt->fib6_flags & (RTF_LOCAL | RTF_ANYCAST)) {
+	if (rt->rt6i_flags & (RTF_LOCAL | RTF_ANYCAST)) {
 		/* for copies of local routes, dst->dev needs to be the
 		 * device if it is a master device, the master device if
 		 * device is enslaved, and the loopback as the default
 		 */
 		if (netif_is_l3_slave(dev) &&
-		    !rt6_need_strict(&rt->fib6_dst.addr))
+		    !rt6_need_strict(&rt->rt6i_dst.addr))
 			dev = l3mdev_master_dev_rcu(dev);
 		else if (!netif_is_l3_master(dev))
 			dev = dev_net(dev)->loopback_dev;
@@ -931,119 +931,36 @@ static struct net_device *ip6_rt_get_dev_rcu(struct fib6_info *rt)
 	return dev;
 }
 
-static const int fib6_prop[RTN_MAX + 1] = {
-	[RTN_UNSPEC]	= 0,
-	[RTN_UNICAST]	= 0,
-	[RTN_LOCAL]	= 0,
-	[RTN_BROADCAST]	= 0,
-	[RTN_ANYCAST]	= 0,
-	[RTN_MULTICAST]	= 0,
-	[RTN_BLACKHOLE]	= -EINVAL,
-	[RTN_UNREACHABLE] = -EHOSTUNREACH,
-	[RTN_PROHIBIT]	= -EACCES,
-	[RTN_THROW]	= -EAGAIN,
-	[RTN_NAT]	= -EINVAL,
-	[RTN_XRESOLVE]	= -EINVAL,
-};
-
-static int ip6_rt_type_to_error(u8 fib6_type)
+static void rt6_set_from(struct rt6_info *rt, struct rt6_info *from)
 {
-	return fib6_prop[fib6_type];
-}
+	BUG_ON(from->from);
 
-static unsigned short fib6_info_dst_flags(struct fib6_info *rt)
-{
-	unsigned short flags = 0;
-
-	if (rt->dst_nocount)
-		flags |= DST_NOCOUNT;
-	if (rt->dst_nopolicy)
-		flags |= DST_NOPOLICY;
-	if (rt->dst_host)
-		flags |= DST_HOST;
-
-	return flags;
-}
-
-static void ip6_rt_init_dst_reject(struct rt6_info *rt, struct fib6_info *ort)
-{
-	rt->dst.error = ip6_rt_type_to_error(ort->fib6_type);
-
-	switch (ort->fib6_type) {
-	case RTN_BLACKHOLE:
-		rt->dst.output = dst_discard_out;
-		rt->dst.input = dst_discard;
-		break;
-	case RTN_PROHIBIT:
-		rt->dst.output = ip6_pkt_prohibit_out;
-		rt->dst.input = ip6_pkt_prohibit;
-		break;
-	case RTN_THROW:
-	case RTN_UNREACHABLE:
-	default:
-		rt->dst.output = ip6_pkt_discard_out;
-		rt->dst.input = ip6_pkt_discard;
-		break;
-	}
-}
-
-static void ip6_rt_init_dst(struct rt6_info *rt, struct fib6_info *ort)
-{
-	rt->dst.flags |= fib6_info_dst_flags(ort);
-
-	if (ort->fib6_flags & RTF_REJECT) {
-		ip6_rt_init_dst_reject(rt, ort);
-		return;
-	}
-
-	rt->dst.error = 0;
-	rt->dst.output = ip6_output;
-
-	if (ort->fib6_type == RTN_LOCAL) {
-		rt->dst.input = ip6_input;
-	} else if (ipv6_addr_type(&ort->fib6_dst.addr) & IPV6_ADDR_MULTICAST) {
-		rt->dst.input = ip6_mc_input;
-	} else {
-		rt->dst.input = ip6_forward;
-	}
-
-	if (ort->fib6_nh.nh_lwtstate) {
-		rt->dst.lwtstate = lwtstate_get(ort->fib6_nh.nh_lwtstate);
-		lwtunnel_set_redirect(&rt->dst);
-	}
-
-	rt->dst.lastuse = jiffies;
-}
-
-/* Caller must already hold reference to @from */
-static void rt6_set_from(struct rt6_info *rt, struct fib6_info *from)
-{
 	rt->rt6i_flags &= ~RTF_EXPIRES;
-	rcu_assign_pointer(rt->from, from);
-	dst_init_metrics(&rt->dst, from->fib6_metrics->metrics, true);
-	if (from->fib6_metrics != &dst_default_metrics) {
-		rt->dst._metrics |= DST_METRICS_REFCOUNTED;
-		refcount_inc(&from->fib6_metrics->refcnt);
-	}
+	dst_hold(&from->dst);
+	rt->from = from;
+	dst_init_metrics(&rt->dst, dst_metrics_ptr(&from->dst), true);
 }
 
-/* Caller must already hold reference to @ort */
-static void ip6_rt_copy_init(struct rt6_info *rt, struct fib6_info *ort)
+static void ip6_rt_copy_init(struct rt6_info *rt, struct rt6_info *ort)
 {
-	struct net_device *dev = fib6_info_nh_dev(ort);
-
-	ip6_rt_init_dst(rt, ort);
-
-	rt->rt6i_dst = ort->fib6_dst;
-	rt->rt6i_idev = dev ? in6_dev_get(dev) : NULL;
-	rt->rt6i_gateway = ort->fib6_nh.nh_gw;
-	rt->rt6i_flags = ort->fib6_flags;
+	rt->dst.input = ort->dst.input;
+	rt->dst.output = ort->dst.output;
+	rt->rt6i_dst = ort->rt6i_dst;
+	rt->dst.error = ort->dst.error;
+	rt->rt6i_idev = ort->rt6i_idev;
+	if (rt->rt6i_idev)
+		in6_dev_hold(rt->rt6i_idev);
+	rt->dst.lastuse = jiffies;
+	rt->rt6i_gateway = ort->rt6i_gateway;
+	rt->rt6i_flags = ort->rt6i_flags;
 	rt6_set_from(rt, ort);
+	rt->rt6i_metric = ort->rt6i_metric;
 #ifdef CONFIG_IPV6_SUBTREES
-	rt->rt6i_src = ort->fib6_src;
+	rt->rt6i_src = ort->rt6i_src;
 #endif
-	rt->rt6i_prefsrc = ort->fib6_prefsrc;
-	rt->dst.lwtstate = lwtstate_get(ort->fib6_nh.nh_lwtstate);
+	rt->rt6i_prefsrc = ort->rt6i_prefsrc;
+	rt->rt6i_table = ort->rt6i_table;
+	rt->dst.lwtstate = lwtstate_get(ort->dst.lwtstate);
 }
 
 static struct fib6_node* fib6_backtrack(struct fib6_node *fn,
@@ -1204,7 +1121,7 @@ int ip6_ins_rt(struct net *net, struct fib6_info *rt)
 	return __ip6_ins_rt(rt, &info, NULL);
 }
 
-static struct rt6_info *ip6_rt_cache_alloc(struct fib6_info *ort,
+static struct rt6_info *ip6_rt_cache_alloc(struct rt6_info *ort,
 					   const struct in6_addr *daddr,
 					   const struct in6_addr *saddr)
 {
@@ -3365,42 +3282,6 @@ static void rt6_do_redirect(struct dst_entry *dst, struct sock *sk, struct sk_bu
 out:
 	fib6_info_release(from);
 	neigh_release(neigh);
-}
-
-/*
- *	Misc support functions
- */
-
-static void rt6_set_from(struct rt6_info *rt, struct rt6_info *from)
-{
-	BUG_ON(from->from);
-
-	rt->rt6i_flags &= ~RTF_EXPIRES;
-	dst_hold(&from->dst);
-	rt->from = from;
-	dst_init_metrics(&rt->dst, dst_metrics_ptr(&from->dst), true);
-}
-
-static void ip6_rt_copy_init(struct rt6_info *rt, struct rt6_info *ort)
-{
-	rt->dst.input = ort->dst.input;
-	rt->dst.output = ort->dst.output;
-	rt->rt6i_dst = ort->rt6i_dst;
-	rt->dst.error = ort->dst.error;
-	rt->rt6i_idev = ort->rt6i_idev;
-	if (rt->rt6i_idev)
-		in6_dev_hold(rt->rt6i_idev);
-	rt->dst.lastuse = jiffies;
-	rt->rt6i_gateway = ort->rt6i_gateway;
-	rt->rt6i_flags = ort->rt6i_flags;
-	rt6_set_from(rt, ort);
-	rt->rt6i_metric = ort->rt6i_metric;
-#ifdef CONFIG_IPV6_SUBTREES
-	rt->rt6i_src = ort->rt6i_src;
-#endif
-	rt->rt6i_prefsrc = ort->rt6i_prefsrc;
-	rt->rt6i_table = ort->rt6i_table;
-	rt->dst.lwtstate = lwtstate_get(ort->dst.lwtstate);
 }
 
 #ifdef CONFIG_IPV6_ROUTE_INFO
