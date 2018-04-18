@@ -123,6 +123,16 @@ struct rt6_exception {
 #define FIB6_EXCEPTION_BUCKET_SIZE (1 << FIB6_EXCEPTION_BUCKET_SIZE_SHIFT)
 #define FIB6_MAX_DEPTH 5
 
+struct fib6_nh {
+	struct in6_addr		nh_gw;
+	struct net_device	*nh_dev;
+	struct lwtunnel_state	*nh_lwtstate;
+
+	unsigned int		nh_flags;
+	atomic_t		nh_upper_bound;
+	int			nh_weight;
+};
+
 struct rt6_info {
 	struct dst_entry		dst;
 	struct rt6_info __rcu		*rt6_next;
@@ -161,45 +171,15 @@ struct fib6_info {
 	 */
 	struct list_head		rt6i_siblings;
 	unsigned int			rt6i_nsiblings;
-	atomic_t			rt6i_nh_upper_bound;
 
 	atomic_t			fib6_ref;
 	unsigned long			expires;
 	struct dst_metrics		*fib6_metrics;
 #define fib6_pmtu		fib6_metrics->metrics[RTAX_MTU-1]
 
-	struct rt6key			fib6_dst;
-	u32				fib6_flags;
-	struct rt6key			fib6_src;
-	struct rt6key			fib6_prefsrc;
-
-	struct rt6_info * __percpu	*rt6i_pcpu;
-	struct rt6_exception_bucket __rcu *rt6i_exception_bucket;
-
-#ifdef CONFIG_IPV6_ROUTER_PREF
-	unsigned long			last_probe;
-#endif
-
-	u32				fib6_metric;
-	u8				fib6_protocol;
-	u8				fib6_type;
-	u8				exception_bucket_flushed:1,
-					should_flush:1,
-					dst_nocount:1,
-					dst_nopolicy:1,
-					dst_host:1,
-					fib6_destroying:1,
-					unused:2;
-
-	struct fib6_nh			fib6_nh;
-	struct rcu_head			rcu;
-};
-
-struct rt6_info {
-	struct dst_entry		dst;
-	struct fib6_info __rcu		*from;
-
-	struct rt6key			rt6i_dst;
+	/* These are in a separate cache line. */
+	struct rt6key			rt6i_dst ____cacheline_aligned_in_smp;
+	u32				rt6i_flags;
 	struct rt6key			rt6i_src;
 	struct in6_addr			rt6i_gateway;
 	struct inet6_dev		*rt6i_idev;
@@ -216,13 +196,14 @@ struct rt6_info {
 	u32				rt6i_metric;
 	u32				rt6i_pmtu;
 	/* more non-fragment space at head required */
-	int				rt6i_nh_weight;
 	unsigned short			rt6i_nfheader_len;
 	u8				rt6i_protocol;
 	u8				fib6_type;
 	u8				exception_bucket_flushed:1,
 					should_flush:1,
 					unused:6;
+
+	struct fib6_nh			fib6_nh;
 };
 
 #define for_each_fib6_node_rt_rcu(fn)					\

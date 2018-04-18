@@ -2215,15 +2215,16 @@ static int ipv6_route_seq_show(struct seq_file *seq, void *v)
 #else
 	seq_puts(seq, "00000000000000000000000000000000 00 ");
 #endif
-	if (rt->fib6_flags & RTF_GATEWAY)
+	if (rt->rt6i_flags & RTF_GATEWAY)
 		seq_printf(seq, "%pi6", &rt->fib6_nh.nh_gw);
 	else
 		seq_puts(seq, "00000000000000000000000000000000");
 
 	dev = rt->fib6_nh.nh_dev;
 	seq_printf(seq, " %08x %08x %08x %08x %8s\n",
-		   rt->fib6_metric, atomic_read(&rt->fib6_ref), 0,
-		   rt->fib6_flags, dev ? dev->name : "");
+		   rt->rt6i_metric, atomic_read(&rt->dst.__refcnt),
+		   rt->dst.__use, rt->rt6i_flags,
+		   dev ? dev->name : "");
 	iter->w.leaf = NULL;
 	return 0;
 }

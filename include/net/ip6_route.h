@@ -286,6 +286,7 @@ static inline struct in6_addr *rt6_nexthop(struct rt6_info *rt,
 static inline bool rt6_duplicate_nexthop(struct fib6_info *a, struct fib6_info *b)
 {
 	return a->fib6_nh.nh_dev == b->fib6_nh.nh_dev &&
+	       a->rt6i_idev == b->rt6i_idev &&
 	       ipv6_addr_equal(&a->fib6_nh.nh_gw, &b->fib6_nh.nh_gw) &&
 	       !lwtunnel_cmp_encap(a->fib6_nh.nh_lwtstate, b->fib6_nh.nh_lwtstate);
 }
