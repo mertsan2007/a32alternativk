@@ -452,7 +452,7 @@ static bool rt6_check_expired(const struct rt6_info *rt)
 			return true;
 	} else if (rt->from) {
 		return rt->dst.obsolete != DST_OBSOLETE_FORCE_CHK ||
-			rt6_check_expired(rt->from);
+			fib6_check_expired(rt->from);
 	}
 	return false;
 }
@@ -2365,7 +2365,7 @@ restart:
 	for_each_fib6_node_rt_rcu(fn) {
 		if (rt->fib6_nh.nh_flags & RTNH_F_DEAD)
 			continue;
-		if (rt6_check_expired(rt))
+		if (fib6_check_expired(rt))
 			continue;
 		if (fib6_check_expired(rt))
 			continue;
@@ -4658,8 +4658,10 @@ static int rt6_fill_node(struct net *net, struct sk_buff *skb,
 			goto nla_put_failure;
 	}
 
-	if (rt->rt6i_flags & RTF_EXPIRES && dst)
-		expires = dst->expires - jiffies;
+	if (rt->rt6i_flags & RTF_EXPIRES) {
+		expires = dst ? dst->expires : rt->expires;
+		expires -= jiffies;
+	}
 
 	if (rtnl_put_cacheinfo(skb, dst, 0, expires, dst ? dst->error : 0) < 0)
 		goto nla_put_failure;

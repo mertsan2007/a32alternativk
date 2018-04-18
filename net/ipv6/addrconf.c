@@ -1270,9 +1270,9 @@ cleanup_prefix_route(struct inet6_ifaddr *ifp, unsigned long expires, bool del_r
 		if (del_rt)
 			ip6_del_rt(dev_net(ifp->idev->dev), rt);
 		else {
-			if (!(f6i->fib6_flags & RTF_EXPIRES))
-				fib6_set_expires(f6i, expires);
-			fib6_info_release(f6i);
+			if (!(rt->rt6i_flags & RTF_EXPIRES))
+				fib6_set_expires(rt, expires);
+			ip6_rt_put(rt);
 		}
 	}
 }

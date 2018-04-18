@@ -907,10 +907,10 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
 					rt->fib6_nsiblings = 0;
 				if (!(iter->fib6_flags & RTF_EXPIRES))
 					return -EEXIST;
-				if (!(rt->fib6_flags & RTF_EXPIRES))
+				if (!(rt->rt6i_flags & RTF_EXPIRES))
 					fib6_clean_expires(iter);
 				else
-					rt6_set_expires(iter, rt->dst.expires);
+					fib6_set_expires(iter, rt->expires);
 				fib6_metric_set(iter, RTAX_MTU, rt->fib6_pmtu);
 				return -EEXIST;
 			}
@@ -1984,7 +1984,7 @@ static int fib6_age(struct rt6_info *rt, void *arg)
 	 *	Routes are expired even if they are in use.
 	 */
 
-	if (rt->fib6_flags & RTF_EXPIRES && rt->expires) {
+	if (rt->rt6i_flags & RTF_EXPIRES && rt->expires) {
 		if (time_after(now, rt->expires)) {
 			RT6_TRACE("expiring %p\n", rt);
 			return -1;
