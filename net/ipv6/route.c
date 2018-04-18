@@ -322,6 +322,10 @@ static const struct rt6_info ip6_null_entry_template = {
 		.output		= ip6_pkt_discard_out,
 	},
 	.rt6i_flags	= (RTF_REJECT | RTF_NONEXTHOP),
+	.rt6i_protocol  = RTPROT_KERNEL,
+	.rt6i_metric	= ~(u32) 0,
+	.rt6i_ref	= ATOMIC_INIT(1),
+	.fib6_type	= RTN_UNREACHABLE,
 };
 
 #ifdef CONFIG_IPV6_MULTIPLE_TABLES
@@ -336,6 +340,10 @@ static const struct rt6_info ip6_prohibit_entry_template = {
 		.output		= ip6_pkt_prohibit_out,
 	},
 	.rt6i_flags	= (RTF_REJECT | RTF_NONEXTHOP),
+	.rt6i_protocol  = RTPROT_KERNEL,
+	.rt6i_metric	= ~(u32) 0,
+	.rt6i_ref	= ATOMIC_INIT(1),
+	.fib6_type	= RTN_PROHIBIT,
 };
 
 static const struct rt6_info ip6_blk_hole_entry_template = {
@@ -348,6 +356,10 @@ static const struct rt6_info ip6_blk_hole_entry_template = {
 		.output		= dst_discard_out,
 	},
 	.rt6i_flags	= (RTF_REJECT | RTF_NONEXTHOP),
+	.rt6i_protocol  = RTPROT_KERNEL,
+	.rt6i_metric	= ~(u32) 0,
+	.rt6i_ref	= ATOMIC_INIT(1),
+	.fib6_type	= RTN_BLACKHOLE,
 };
 
 #endif
@@ -2842,6 +2854,11 @@ static struct rt6_info *ip6_route_info_create(struct fib6_config *cfg,
 		goto out;
 	}
 
+	if (cfg->fc_type > RTN_MAX) {
+		NL_SET_ERR_MSG(extack, "Invalid route type");
+		goto out;
+	}
+
 	if (cfg->fc_dst_len > 128) {
 		NL_SET_ERR_MSG(extack, "Invalid prefix length");
 		goto out;
@@ -2947,6 +2964,8 @@ static struct rt6_info *ip6_route_info_create(struct fib6_config *cfg,
 
 	rt->rt6i_metric = cfg->fc_metric;
 	rt->rt6i_nh_weight = 1;
+
+	rt->fib6_type = cfg->fc_type;
 
 	/* We cannot add true routes via loopback here,
 	   they would result in kernel looping; promote them to reject routes
@@ -3664,11 +3683,24 @@ struct fib6_info *addrconf_f6i_alloc(struct net *net,
 		f6i->fib6_flags |= RTF_LOCAL;
 	}
 
-	f6i->fib6_nh.nh_gw = *addr;
-	dev_hold(dev);
-	f6i->fib6_nh.nh_dev = dev;
-	f6i->fib6_dst.addr = *addr;
-	f6i->fib6_dst.plen = 128;
+	rt->dst.flags |= DST_HOST;
+	rt->dst.input = ip6_input;
+	rt->dst.output = ip6_output;
+	rt->rt6i_idev = idev;
+
+	rt->rt6i_protocol = RTPROT_KERNEL;
+	rt->rt6i_flags = RTF_UP | RTF_NONEXTHOP;
+	if (anycast) {
+		rt->fib6_type = RTN_ANYCAST;
+		rt->rt6i_flags |= RTF_ANYCAST;
+	} else {
+		rt->fib6_type = RTN_LOCAL;
+		rt->rt6i_flags |= RTF_LOCAL;
+	}
+
+	rt->rt6i_gateway  = *addr;
+	rt->rt6i_dst.addr = *addr;
+	rt->rt6i_dst.plen = 128;
 	tb_id = l3mdev_fib_table(idev->dev) ? : RT6_TABLE_LOCAL;
 	f6i->fib6_table = fib6_get_table(net, tb_id);
 
