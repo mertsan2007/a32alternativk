@@ -942,6 +942,20 @@ static int ip6_rt_type_to_error(u8 fib6_type)
 	return fib6_prop[fib6_type];
 }
 
+static unsigned short fib6_info_dst_flags(struct rt6_info *rt)
+{
+	unsigned short flags = 0;
+
+	if (rt->dst_nocount)
+		flags |= DST_NOCOUNT;
+	if (rt->dst_nopolicy)
+		flags |= DST_NOPOLICY;
+	if (rt->dst_host)
+		flags |= DST_HOST;
+
+	return flags;
+}
+
 static void ip6_rt_init_dst_reject(struct rt6_info *rt, struct rt6_info *ort)
 {
 	rt->dst.error = ip6_rt_type_to_error(ort->fib6_type);
@@ -966,6 +980,8 @@ static void ip6_rt_init_dst_reject(struct rt6_info *rt, struct rt6_info *ort)
 
 static void ip6_rt_init_dst(struct rt6_info *rt, struct rt6_info *ort)
 {
+	rt->dst.flags |= fib6_info_dst_flags(ort);
+
 	if (ort->rt6i_flags & RTF_REJECT) {
 		ip6_rt_init_dst_reject(rt, ort);
 		return;
@@ -975,7 +991,6 @@ static void ip6_rt_init_dst(struct rt6_info *rt, struct rt6_info *ort)
 	rt->dst.output = ip6_output;
 
 	if (ort->fib6_type == RTN_LOCAL) {
-		rt->dst.flags |= DST_HOST;
 		rt->dst.input = ip6_input;
 	} else if (ipv6_addr_type(&ort->rt6i_dst.addr) & IPV6_ADDR_MULTICAST) {
 		rt->dst.input = ip6_mc_input;
@@ -1063,10 +1078,11 @@ static bool ip6_hold_safe(struct net *net, struct rt6_info **prt,
 /* called with rcu_lock held */
 static struct rt6_info *ip6_create_rt_rcu(struct rt6_info *rt)
 {
+	unsigned short flags = fib6_info_dst_flags(rt);
 	struct net_device *dev = rt->fib6_nh.nh_dev;
 	struct rt6_info *nrt;
 
-	nrt = __ip6_dst_alloc(dev_net(dev), dev, 0);
+	nrt = __ip6_dst_alloc(dev_net(dev), dev, flags);
 	if (nrt)
 		ip6_rt_copy_init(nrt, rt);
 
@@ -1267,7 +1283,7 @@ static struct rt6_info *ip6_rt_pcpu_alloc(struct fib6_info *rt)
 
 	rcu_read_lock();
 	dev = ip6_rt_get_dev_rcu(rt);
-	pcpu_rt = ip6_dst_alloc(dev_net(dev), dev, flags);
+	pcpu_rt = __ip6_dst_alloc(dev_net(dev), dev, flags);
 	rcu_read_unlock();
 	if (!pcpu_rt) {
 		fib6_info_release(rt);
@@ -3066,9 +3082,9 @@ static struct rt6_info *ip6_route_info_create(struct fib6_config *cfg,
 		rt->fib6_nh.nh_lwtstate = lwtstate_get(lwtstate);
 	}
 
-	ipv6_addr_prefix(&rt->fib6_dst.addr, &cfg->fc_dst, cfg->fc_dst_len);
-	rt->fib6_dst.plen = cfg->fc_dst_len;
-	if (rt->fib6_dst.plen == 128)
+	ipv6_addr_prefix(&rt->rt6i_dst.addr, &cfg->fc_dst, cfg->fc_dst_len);
+	rt->rt6i_dst.plen = cfg->fc_dst_len;
+	if (rt->rt6i_dst.plen == 128)
 		rt->dst_host = true;
 
 #ifdef CONFIG_IPV6_SUBTREES
@@ -3717,10 +3733,12 @@ struct rt6_info *addrconf_dst_alloc(struct net *net,
 	if (!f6i)
 		return ERR_PTR(-ENOMEM);
 
+	rt->dst_nocount = true;
+
 	in6_dev_hold(idev);
 	rt->rt6i_idev = idev;
 
-	rt->dst.flags |= DST_HOST;
+	rt->dst_host = true;
 	rt->rt6i_protocol = RTPROT_KERNEL;
 	rt->rt6i_flags = RTF_UP | RTF_NONEXTHOP;
 	if (anycast) {
