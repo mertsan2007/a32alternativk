@@ -1116,9 +1116,10 @@ static int __ip6_ins_rt(struct fib6_info *rt, struct nl_info *info,
 	return err;
 }
 
-int ip6_ins_rt(struct net *net, struct fib6_info *rt)
+int ip6_ins_rt(struct net *net, struct rt6_info *rt)
 {
 	struct nl_info info = {	.nl_net = net, };
+	struct mx6_config mxc = { .mx = NULL, };
 
 	return __ip6_ins_rt(rt, &info, NULL);
 }
@@ -1209,7 +1210,7 @@ static struct rt6_info *rt6_get_pcpu_route(struct rt6_info *rt)
 }
 
 static struct rt6_info *rt6_make_pcpu_route(struct net *net,
-					    struct fib6_info *rt)
+					    struct rt6_info *rt)
 {
 	struct rt6_info *pcpu_rt, *prev, **p;
 
@@ -1868,7 +1869,7 @@ uncached_rt_out:
 				 * rt->rt6i_ref makes sure rt can't be released.
 				 */
 				rcu_read_unlock();
-				pcpu_rt = rt6_make_pcpu_route(rt);
+				pcpu_rt = rt6_make_pcpu_route(net, rt);
 				rt6_release(rt);
 			} else {
 				/* rt is already removed from tree */
@@ -2167,7 +2168,7 @@ static void ip6_negative_advice(struct sock *sk,
 			dst_hold(dst);
 			sk_dst_reset(sk);
 
-			rt6_remove_exception_rt(rt);
+			ip6_del_rt(dev_net(dst->dev), rt);
 		}
 		return;
 	}
@@ -2185,7 +2186,7 @@ static void ip6_link_failure(struct sk_buff *skb)
 		rcu_read_lock();
 		if (rt->rt6i_flags & RTF_CACHE) {
 			if (dst_hold_safe(&rt->dst))
-				rt6_remove_exception_rt(rt);
+				ip6_del_rt(dev_net(rt->dst.dev), rt);
 		} else {
 			struct fib6_info *from;
 			struct fib6_node *fn;
@@ -3107,7 +3108,7 @@ out:
 	return err;
 }
 
-int ip6_del_rt(struct net *net, struct fib6_info *rt)
+int ip6_del_rt(struct net *net, struct rt6_info *rt)
 {
 	struct nl_info info = { .nl_net = net };
 
@@ -3435,7 +3436,7 @@ static struct fib6_info *rt6_add_route_info(struct net *net,
 }
 #endif
 
-struct fib6_info *rt6_get_dflt_router(struct net *net,
+struct rt6_info *rt6_get_dflt_router(struct net *net,
 				     const struct in6_addr *addr,
 				     struct net_device *dev)
 {
@@ -3460,7 +3461,7 @@ struct fib6_info *rt6_get_dflt_router(struct net *net,
 	return rt;
 }
 
-struct fib6_info *rt6_add_dflt_router(struct net *net,
+struct rt6_info *rt6_add_dflt_router(struct net *net,
 				     const struct in6_addr *gwaddr,
 				     struct net_device *dev,
 				     unsigned int pref)
@@ -3620,10 +3621,10 @@ static int ip6_pkt_prohibit_out(struct net *net, struct sock *sk, struct sk_buff
  *	Allocate a dst for local (unicast / anycast) address.
  */
 
-struct fib6_info *addrconf_f6i_alloc(struct net *net,
-				     struct inet6_dev *idev,
-				     const struct in6_addr *addr,
-				     bool anycast, gfp_t gfp_flags)
+struct rt6_info *addrconf_dst_alloc(struct net *net,
+				    struct inet6_dev *idev,
+				    const struct in6_addr *addr,
+				    bool anycast)
 {
 	u32 tb_id;
 	struct net_device *dev = idev->dev;

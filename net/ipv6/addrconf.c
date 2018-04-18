@@ -1118,10 +1118,9 @@ ipv6_add_addr(struct inet6_dev *idev, const struct in6_addr *addr,
 		goto out;
 	}
 
-	f6i = addrconf_f6i_alloc(net, idev, addr, false, gfp_flags);
-	if (IS_ERR(f6i)) {
-		err = PTR_ERR(f6i);
-		f6i = NULL;
+	rt = addrconf_dst_alloc(net, idev, addr, false);
+	if (IS_ERR(rt)) {
+		err = PTR_ERR(rt);
 		goto out;
 	}
 
@@ -1269,7 +1268,7 @@ cleanup_prefix_route(struct inet6_ifaddr *ifp, unsigned long expires, bool del_r
 				       0, RTF_GATEWAY | RTF_DEFAULT);
 	if (f6i) {
 		if (del_rt)
-			ip6_del_rt(dev_net(ifp->idev->dev), f6i);
+			ip6_del_rt(dev_net(ifp->idev->dev), rt);
 		else {
 			if (!(f6i->fib6_flags & RTF_EXPIRES))
 				fib6_set_expires(f6i, expires);
@@ -3455,10 +3454,9 @@ static int fixup_permanent_addr(struct net *net,
 	if (!ifp->rt || !ifp->rt->fib6_node) {
 		struct fib6_info *f6i, *prev;
 
-		f6i = addrconf_f6i_alloc(net, idev, &ifp->addr, false,
-					GFP_ATOMIC);
-		if (unlikely(IS_ERR(f6i)))
-			return PTR_ERR(f6i);
+		rt = addrconf_dst_alloc(net, idev, &ifp->addr, false);
+		if (unlikely(IS_ERR(rt)))
+			return PTR_ERR(rt);
 
 		/* ifp->rt can be accessed outside of rtnl */
 		spin_lock(&ifp->lock);
@@ -5852,7 +5850,7 @@ static void __ipv6_ifa_notify(int event, struct inet6_ifaddr *ifp)
 		 * host route, so nothing to insert. That will be fixed when
 		 * the device is brought up.
 		 */
-		if (ifp->rt && !rcu_access_pointer(ifp->rt->fib6_node)) {
+		if (ifp->rt && !rcu_access_pointer(ifp->rt->rt6i_node)) {
 			ip6_ins_rt(net, ifp->rt);
 		} else if (!ifp->rt && (ifp->idev->dev->flags & IFF_UP)) {
 			pr_warn("BUG: Address %pI6c on device %s is missing its host route.\n",
@@ -5879,8 +5877,8 @@ static void __ipv6_ifa_notify(int event, struct inet6_ifaddr *ifp)
 				ip6_del_rt(net, rt);
 		}
 		if (ifp->rt) {
-			ip6_del_rt(net, ifp->rt);
-			ifp->rt = NULL;
+			if (dst_hold_safe(&ifp->rt->dst))
+				ip6_del_rt(net, ifp->rt);
 		}
 		rt_genid_bump_ipv6(net);
 		break;
