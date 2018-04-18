@@ -305,10 +305,6 @@ static const struct rt6_info ip6_null_entry_template = {
 		.output		= ip6_pkt_discard_out,
 	},
 	.rt6i_flags	= (RTF_REJECT | RTF_NONEXTHOP),
-	.rt6i_protocol  = RTPROT_KERNEL,
-	.rt6i_metric	= ~(u32) 0,
-	.rt6i_ref	= ATOMIC_INIT(1),
-	.fib6_type	= RTN_UNREACHABLE,
 };
 
 #ifdef CONFIG_IPV6_MULTIPLE_TABLES
@@ -323,10 +319,6 @@ static const struct rt6_info ip6_prohibit_entry_template = {
 		.output		= ip6_pkt_prohibit_out,
 	},
 	.rt6i_flags	= (RTF_REJECT | RTF_NONEXTHOP),
-	.rt6i_protocol  = RTPROT_KERNEL,
-	.rt6i_metric	= ~(u32) 0,
-	.rt6i_ref	= ATOMIC_INIT(1),
-	.fib6_type	= RTN_PROHIBIT,
 };
 
 static const struct rt6_info ip6_blk_hole_entry_template = {
@@ -339,10 +331,6 @@ static const struct rt6_info ip6_blk_hole_entry_template = {
 		.output		= dst_discard_out,
 	},
 	.rt6i_flags	= (RTF_REJECT | RTF_NONEXTHOP),
-	.rt6i_protocol  = RTPROT_KERNEL,
-	.rt6i_metric	= ~(u32) 0,
-	.rt6i_ref	= ATOMIC_INIT(1),
-	.fib6_type	= RTN_BLACKHOLE,
 };
 
 #endif
@@ -990,12 +978,10 @@ static void ip6_rt_copy_init(struct rt6_info *rt, struct fib6_info *ort)
 	rt->rt6i_gateway = ort->fib6_nh.nh_gw;
 	rt->rt6i_flags = ort->rt6i_flags;
 	rt6_set_from(rt, ort);
-	rt->rt6i_metric = ort->rt6i_metric;
 #ifdef CONFIG_IPV6_SUBTREES
 	rt->rt6i_src = ort->rt6i_src;
 #endif
 	rt->rt6i_prefsrc = ort->rt6i_prefsrc;
-	rt->rt6i_table = ort->rt6i_table;
 	rt->dst.lwtstate = lwtstate_get(ort->fib6_nh.nh_lwtstate);
 }
 
@@ -1280,9 +1266,8 @@ static void rt6_remove_exception(struct rt6_exception_bucket *bucket,
 		return;
 
 	net = dev_net(rt6_ex->rt6i->dst.dev);
-	rt6_ex->rt6i->rt6i_node = NULL;
 	hlist_del_rcu(&rt6_ex->hlist);
-	ip6_rt_put(rt6_ex->rt6i);
+	dst_release(&rt6_ex->rt6i->dst);
 	kfree_rcu(rt6_ex, rcu);
 	WARN_ON_ONCE(!bucket->depth);
 	bucket->depth--;
@@ -1464,8 +1449,6 @@ static int rt6_insert_exception(struct rt6_info *nrt,
 	}
 	rt6_ex->rt6i = nrt;
 	rt6_ex->stamp = jiffies;
-	atomic_inc(&nrt->rt6i_ref);
-	nrt->rt6i_node = ort->rt6i_node;
 	hlist_add_head_rcu(&rt6_ex->hlist, &bucket->chain);
 	bucket->depth++;
 	net->ipv6.rt6_stats->fib_rt_cache++;
@@ -2272,7 +2255,7 @@ static bool rt6_cache_allowed_for_pmtu(const struct rt6_info *rt)
 	rcu_read_unlock();
 
 	return !(rt->rt6i_flags & RTF_CACHE) &&
-		(rt->rt6i_flags & RTF_PCPU || from_set);
+		(rt->rt6i_flags & RTF_PCPU || rt->from);
 }
 
 static void __ip6_rt_update_pmtu(struct dst_entry *dst, const struct sock *sk,

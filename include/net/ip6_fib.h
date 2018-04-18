@@ -175,51 +175,9 @@ struct fib6_info {
 
 struct rt6_info {
 	struct dst_entry		dst;
-	struct rt6_info __rcu		*rt6_next;
 	struct fib6_info		*from;
 
-struct rt6_exception {
-	struct hlist_node	hlist;
-	struct rt6_info		*rt6i;
-	unsigned long		stamp;
-	struct rcu_head		rcu;
-};
-
-#define FIB6_EXCEPTION_BUCKET_SIZE_SHIFT 10
-#define FIB6_EXCEPTION_BUCKET_SIZE (1 << FIB6_EXCEPTION_BUCKET_SIZE_SHIFT)
-#define FIB6_MAX_DEPTH 5
-
-struct fib6_nh {
-	struct in6_addr		nh_gw;
-	struct net_device	*nh_dev;
-	struct lwtunnel_state	*nh_lwtstate;
-
-	unsigned int		nh_flags;
-	atomic_t		nh_upper_bound;
-	int			nh_weight;
-};
-
-struct fib6_info {
-	struct fib6_table		*fib6_table;
-	struct fib6_info __rcu		*fib6_next;
-	struct fib6_node __rcu		*fib6_node;
-
-	/* Multipath routes:
-	 * siblings is a list of fib6_info that have the the same metric/weight,
-	 * destination, but not the same gateway. nsiblings is just a cache
-	 * to speed up lookup.
-	 */
-	struct list_head		rt6i_siblings;
-	unsigned int			rt6i_nsiblings;
-
-	atomic_t			fib6_ref;
-	unsigned long			expires;
-	struct dst_metrics		*fib6_metrics;
-#define fib6_pmtu		fib6_metrics->metrics[RTAX_MTU-1]
-
-	/* These are in a separate cache line. */
-	struct rt6key			rt6i_dst ____cacheline_aligned_in_smp;
-	u32				rt6i_flags;
+	struct rt6key			rt6i_dst;
 	struct rt6key			rt6i_src;
 	struct in6_addr			rt6i_gateway;
 	struct inet6_dev		*rt6i_idev;
@@ -229,26 +187,8 @@ struct fib6_info {
 	struct list_head		rt6i_uncached;
 	struct uncached_list		*rt6i_uncached_list;
 
-	struct inet6_dev		*rt6i_idev;
-	struct rt6_info * __percpu	*rt6i_pcpu;
-	struct rt6_exception_bucket __rcu *rt6i_exception_bucket;
-
-	u32				rt6i_metric;
 	/* more non-fragment space at head required */
 	unsigned short			rt6i_nfheader_len;
-	u8				rt6i_protocol;
-	u8				fib6_type;
-	u8				exception_bucket_flushed:1,
-					should_flush:1,
-					dst_nocount:1,
-					dst_nopolicy:1,
-					dst_host:1,
-					unused:3;
-
-	unsigned long			expires;
-	struct dst_metrics		*fib6_metrics;
-#define fib6_pmtu		fib6_metrics->metrics[RTAX_MTU-1]
-	struct fib6_nh			fib6_nh;
 };
 
 #define for_each_fib6_node_rt_rcu(fn)					\
@@ -350,9 +290,6 @@ static inline void ip6_rt_put(struct rt6_info *rt)
 }
 
 struct fib6_info *fib6_info_alloc(gfp_t gfp_flags);
-void fib6_info_destroy_rcu(struct rcu_head *head);
-
-struct fib6_info *fib6_info_alloc(gfp_t gfp_flags);
 void fib6_info_destroy(struct fib6_info *f6i);
 
 static inline void fib6_info_hold(struct fib6_info *f6i)
@@ -364,22 +301,6 @@ static inline void fib6_info_release(struct fib6_info *f6i)
 {
 	if (f6i && atomic_dec_and_test(&f6i->rt6i_ref))
 		fib6_info_destroy(f6i);
-}
-
-static inline void rt6_hold(struct rt6_info *rt)
-{
-	atomic_inc(&f6i->fib6_ref);
-}
-
-static inline bool fib6_info_hold_safe(struct fib6_info *f6i)
-{
-	return atomic_inc_not_zero(&f6i->fib6_ref);
-}
-
-static inline void fib6_info_release(struct fib6_info *f6i)
-{
-	if (f6i && atomic_dec_and_test(&f6i->fib6_ref))
-		call_rcu(&f6i->rcu, fib6_info_destroy_rcu);
 }
 
 enum fib6_walk_state {
