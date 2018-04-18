@@ -1118,7 +1118,7 @@ ipv6_add_addr(struct inet6_dev *idev, const struct in6_addr *addr,
 		goto out;
 	}
 
-	rt = addrconf_dst_alloc(net, idev, addr, false);
+	rt = addrconf_dst_alloc(net, idev, addr, false, gfp_flags);
 	if (IS_ERR(rt)) {
 		err = PTR_ERR(rt);
 		rt = NULL;
@@ -3455,7 +3455,8 @@ static int fixup_permanent_addr(struct net *net,
 	if (!ifp->rt || !ifp->rt->fib6_node) {
 		struct fib6_info *f6i, *prev;
 
-		rt = addrconf_dst_alloc(net, idev, &ifp->addr, false);
+		rt = addrconf_dst_alloc(net, idev, &ifp->addr, false,
+					GFP_ATOMIC);
 		if (unlikely(IS_ERR(rt)))
 			return PTR_ERR(rt);
 

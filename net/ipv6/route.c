@@ -2968,6 +2968,7 @@ out:
 }
 
 static struct rt6_info *ip6_route_info_create(struct fib6_config *cfg,
+					      gfp_t gfp_flags,
 					      struct netlink_ext_ack *extack)
 {
 	struct net *net = cfg->fc_nlinfo.nl_net;
@@ -3182,12 +3183,13 @@ out:
 	return ERR_PTR(err);
 }
 
-int ip6_route_add(struct fib6_config *cfg, struct netlink_ext_ack *extack)
+int ip6_route_add(struct fib6_config *cfg, gfp_t gfp_flags,
+		  struct netlink_ext_ack *extack)
 {
 	struct rt6_info *rt;
 	int err;
 
-	rt = ip6_route_info_create(cfg, extack);
+	rt = ip6_route_info_create(cfg, gfp_flags, extack);
 	if (IS_ERR(rt))
 		return PTR_ERR(rt);
 
@@ -3730,7 +3732,7 @@ static int ip6_pkt_prohibit_out(struct net *net, struct sock *sk, struct sk_buff
 struct rt6_info *addrconf_dst_alloc(struct net *net,
 				    struct inet6_dev *idev,
 				    const struct in6_addr *addr,
-				    bool anycast)
+				    bool anycast, gfp_t gfp_flags)
 {
 	u32 tb_id;
 	struct net_device *dev = idev->dev;
