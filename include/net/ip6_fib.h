@@ -234,7 +234,6 @@ static inline bool fib6_get_cookie_safe(const struct fib6_info *f6i,
 	struct fib6_node *fn;
 	bool status = false;
 
-	rcu_read_lock();
 	fn = rcu_dereference(f6i->fib6_node);
 
 	if (fn) {
@@ -252,8 +251,12 @@ static inline u32 rt6_get_cookie(const struct rt6_info *rt)
 	struct fib6_info *from;
 	u32 cookie = 0;
 
+	rcu_read_lock();
+
 	if (rt->from)
 		fib6_get_cookie_safe(rt->from, &cookie);
+
+	rcu_read_unlock();
 
 	return cookie;
 }

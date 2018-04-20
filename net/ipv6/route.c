@@ -2179,7 +2179,6 @@ static struct dst_entry *rt6_dst_from_check(struct rt6_info *rt,
 static struct dst_entry *ip6_dst_check(struct dst_entry *dst, u32 cookie)
 {
 	struct dst_entry *dst_ret;
-	struct fib6_info *from;
 	struct rt6_info *rt;
 
 	rt = container_of(dst, struct rt6_info, dst);
@@ -2193,9 +2192,9 @@ static struct dst_entry *ip6_dst_check(struct dst_entry *dst, u32 cookie)
 
 	if (rt->rt6i_flags & RTF_PCPU ||
 	    (unlikely(!list_empty(&rt->rt6i_uncached)) && rt->from))
-		return rt6_dst_from_check(rt, cookie);
+		dst_ret = rt6_dst_from_check(rt, cookie);
 	else
-		dst_ret = rt6_check(rt, from, cookie);
+		dst_ret = rt6_check(rt, cookie);
 
 	rcu_read_unlock();
 
