@@ -2247,15 +2247,8 @@ static void ip6_link_failure(struct sk_buff *skb)
 
 static void rt6_update_expires(struct rt6_info *rt0, int timeout)
 {
-	if (!(rt0->rt6i_flags & RTF_EXPIRES)) {
-		struct fib6_info *from;
-
-		rcu_read_lock();
-		from = rcu_dereference(rt0->from);
-		if (from)
-			rt0->dst.expires = from->expires;
-		rcu_read_unlock();
-	}
+	if (!(rt0->rt6i_flags & RTF_EXPIRES) && rt0->from)
+		rt0->dst.expires = rt0->from->expires;
 
 	dst_set_expires(&rt0->dst, timeout);
 	rt0->rt6i_flags |= RTF_EXPIRES;
