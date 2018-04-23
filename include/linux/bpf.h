@@ -416,7 +416,7 @@ int bpf_prog_array_copy(struct bpf_prog_array __rcu *old_array,
 		}					\
 _out:							\
 		rcu_read_unlock();			\
-		preempt_enable();			\
+		preempt_enable_no_resched();		\
 		_ret;					\
 	 })
 
