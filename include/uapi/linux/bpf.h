@@ -1465,6 +1465,15 @@ union bpf_attr {
  *     @delta: A negative integer to be added to xdp_md.data_end
  *     Return: 0 on success or negative on error
  *
+ * int bpf_skb_get_xfrm_state(skb, index, xfrm_state, size, flags)
+ *     retrieve XFRM state
+ *     @skb: pointer to skb
+ *     @index: index of the xfrm state in the secpath
+ *     @key: pointer to 'struct bpf_xfrm_state'
+ *     @size: size of 'struct bpf_xfrm_state'
+ *     @flags: room for future extensions
+ *     Return: 0 on success or negative error
+ *
  * int skb_load_bytes_relative(const struct sk_buff *skb, u32 offset, void *to, u32 len, u32 start_header)
  * 	Description
  * 		This helper is similar to **bpf_skb_load_bytes**\ () in that
@@ -1737,7 +1746,6 @@ struct bpf_xfrm_state {
 	__u32 reqid;
 	__u32 spi;	/* Stored in network byte order */
 	__u16 family;
-	__u16 ext;	/* Padding, future use. */
 	union {
 		__u32 remote_ipv4;	/* Stored in network byte order */
 		__u32 remote_ipv6[4];	/* Stored in network byte order */
