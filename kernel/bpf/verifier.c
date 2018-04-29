@@ -23,6 +23,7 @@
 #include <linux/stringify.h>
 #include <linux/bsearch.h>
 #include <linux/sort.h>
+#include <linux/perf_event.h>
 
 #include "disasm.h"
 
