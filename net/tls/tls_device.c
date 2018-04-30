@@ -52,16 +52,10 @@ static DEFINE_SPINLOCK(tls_device_lock);
 
 static void tls_device_free_ctx(struct tls_context *ctx)
 {
-	if (ctx->tx_conf == TLS_HW) {
-		kfree(tls_offload_ctx_tx(ctx));
-		kfree(ctx->tx.rec_seq);
-		kfree(ctx->tx.iv);
-	}
+	struct tls_offload_context *offload_ctx = tls_offload_ctx(ctx);
 
-	if (ctx->rx_conf == TLS_HW)
-		kfree(tls_offload_ctx_rx(ctx));
-
-	tls_ctx_free(ctx);
+	kfree(offload_ctx);
+	kfree(ctx);
 }
 
 static void tls_device_gc_task(struct work_struct *work)
@@ -77,31 +71,14 @@ static void tls_device_gc_task(struct work_struct *work)
 	list_for_each_entry_safe(ctx, tmp, &gc_list, list) {
 		struct net_device *netdev = ctx->netdev;
 
-		if (netdev && ctx->tx_conf == TLS_HW) {
+		if (netdev) {
 			netdev->tlsdev_ops->tls_dev_del(netdev, ctx,
 							TLS_OFFLOAD_CTX_DIR_TX);
 			dev_put(netdev);
-			ctx->netdev = NULL;
 		}
 
 		list_del(&ctx->list);
 		tls_device_free_ctx(ctx);
-	}
-}
-
-static void tls_device_attach(struct tls_context *ctx, struct sock *sk,
-			      struct net_device *netdev)
-{
-	if (sk->sk_destruct != tls_device_sk_destruct) {
-		refcount_set(&ctx->refcount, 1);
-		dev_hold(netdev);
-		ctx->netdev = netdev;
-		spin_lock_irq(&tls_device_lock);
-		list_add_tail(&ctx->list, &tls_device_list);
-		spin_unlock_irq(&tls_device_lock);
-
-		ctx->sk_destruct = sk->sk_destruct;
-		sk->sk_destruct = tls_device_sk_destruct;
 	}
 }
 
@@ -110,16 +87,13 @@ static void tls_device_queue_ctx_destruction(struct tls_context *ctx)
 	unsigned long flags;
 
 	spin_lock_irqsave(&tls_device_lock, flags);
-	if (unlikely(!refcount_dec_and_test(&ctx->refcount)))
-		goto unlock;
-
 	list_move_tail(&ctx->list, &tls_device_gc_list);
 
 	/* schedule_work inside the spinlock
 	 * to make sure tls_device_down waits for that work.
 	 */
 	schedule_work(&tls_device_gc_work);
-unlock:
+
 	spin_unlock_irqrestore(&tls_device_lock, flags);
 }
 
@@ -151,7 +125,7 @@ static void destroy_record(struct tls_record_info *record)
 	kfree(record);
 }
 
-static void delete_all_records(struct tls_offload_context_tx *offload_ctx)
+static void delete_all_records(struct tls_offload_context *offload_ctx)
 {
 	struct tls_record_info *info, *temp;
 
@@ -167,14 +141,14 @@ static void tls_icsk_clean_acked(struct sock *sk, u32 acked_seq)
 {
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
 	struct tls_record_info *info, *temp;
-	struct tls_offload_context_tx *ctx;
+	struct tls_offload_context *ctx;
 	u64 deleted_records = 0;
 	unsigned long flags;
 
 	if (!tls_ctx)
 		return;
 
-	ctx = tls_offload_ctx_tx(tls_ctx);
+	ctx = tls_offload_ctx(tls_ctx);
 
 	spin_lock_irqsave(&ctx->lock, flags);
 	info = ctx->retransmit_hint;
@@ -205,19 +179,18 @@ static void tls_icsk_clean_acked(struct sock *sk, u32 acked_seq)
 void tls_device_sk_destruct(struct sock *sk)
 {
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
-	struct tls_offload_context_tx *ctx = tls_offload_ctx_tx(tls_ctx);
+	struct tls_offload_context *ctx = tls_offload_ctx(tls_ctx);
 
-	tls_ctx->sk_destruct(sk);
+	if (ctx->open_record)
+		destroy_record(ctx->open_record);
 
-	if (tls_ctx->tx_conf == TLS_HW) {
-		if (ctx->open_record)
-			destroy_record(ctx->open_record);
-		delete_all_records(ctx);
-		crypto_free_aead(ctx->aead_send);
-		clean_acked_data_disable(inet_csk(sk));
-	}
+	delete_all_records(ctx);
+	crypto_free_aead(ctx->aead_send);
+	ctx->sk_destruct(sk);
+	clean_acked_data_disable(inet_csk(sk));
 
-	tls_device_queue_ctx_destruction(tls_ctx);
+	if (refcount_dec_and_test(&tls_ctx->refcount))
+		tls_device_queue_ctx_destruction(tls_ctx);
 }
 EXPORT_SYMBOL(tls_device_sk_destruct);
 
@@ -246,7 +219,7 @@ static void tls_append_frag(struct tls_record_info *record,
 
 static int tls_push_record(struct sock *sk,
 			   struct tls_context *ctx,
-			   struct tls_offload_context_tx *offload_ctx,
+			   struct tls_offload_context *offload_ctx,
 			   struct tls_record_info *record,
 			   struct page_frag *pfrag,
 			   int flags,
@@ -291,7 +264,7 @@ static int tls_push_record(struct sock *sk,
 	return tls_push_sg(sk, ctx, offload_ctx->sg_tx_data, 0, flags);
 }
 
-static int tls_create_new_record(struct tls_offload_context_tx *offload_ctx,
+static int tls_create_new_record(struct tls_offload_context *offload_ctx,
 				 struct page_frag *pfrag,
 				 size_t prepend_size)
 {
@@ -317,7 +290,7 @@ static int tls_create_new_record(struct tls_offload_context_tx *offload_ctx,
 }
 
 static int tls_do_allocation(struct sock *sk,
-			     struct tls_offload_context_tx *offload_ctx,
+			     struct tls_offload_context *offload_ctx,
 			     struct page_frag *pfrag,
 			     size_t prepend_size)
 {
@@ -351,15 +324,15 @@ static int tls_push_data(struct sock *sk,
 			 unsigned char record_type)
 {
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
-	struct tls_offload_context_tx *ctx = tls_offload_ctx_tx(tls_ctx);
+	struct tls_offload_context *ctx = tls_offload_ctx(tls_ctx);
 	int tls_push_record_flags = flags | MSG_SENDPAGE_NOTLAST;
+	int more = flags & (MSG_SENDPAGE_NOTLAST | MSG_MORE);
 	struct tls_record_info *record = ctx->open_record;
 	struct page_frag *pfrag;
 	size_t orig_size = size;
 	u32 max_open_record_len;
-	bool more = false;
-	bool done = false;
 	int copy, rc = 0;
+	bool done = false;
 	long timeo;
 
 	if (flags &
@@ -424,8 +397,9 @@ handle_error:
 		if (!size) {
 last_record:
 			tls_push_record_flags = flags;
-			if (flags & (MSG_SENDPAGE_NOTLAST | MSG_MORE)) {
-				more = true;
+			if (more) {
+				tls_ctx->pending_open_record_frags =
+						record->num_frags;
 				break;
 			}
 
@@ -445,8 +419,6 @@ last_record:
 				break;
 		}
 	} while (!done);
-
-	tls_ctx->pending_open_record_frags = more;
 
 	if (orig_size - size > 0)
 		rc = orig_size - size;
@@ -479,7 +451,7 @@ int tls_device_sendpage(struct sock *sk, struct page *page,
 			int offset, size_t size, int flags)
 {
 	struct iov_iter	msg_iter;
-	char *kaddr;
+	char *kaddr = kmap(page);
 	struct kvec iov;
 	int rc;
 
@@ -493,7 +465,6 @@ int tls_device_sendpage(struct sock *sk, struct page *page,
 		goto out;
 	}
 
-	kaddr = kmap(page);
 	iov.iov_base = kaddr + offset;
 	iov.iov_len = size;
 	iov_iter_kvec(&msg_iter, WRITE | ITER_KVEC, &iov, 1, size);
@@ -506,11 +477,11 @@ out:
 	return rc;
 }
 
-struct tls_record_info *tls_get_record(struct tls_offload_context_tx *context,
+struct tls_record_info *tls_get_record(struct tls_offload_context *context,
 				       u32 seq, u64 *p_record_sn)
 {
 	u64 record_sn = context->hint_record_sn;
-	struct tls_record_info *info, *last;
+	struct tls_record_info *info;
 
 	info = context->retransmit_hint;
 	if (!info ||
@@ -520,25 +491,6 @@ struct tls_record_info *tls_get_record(struct tls_offload_context_tx *context,
 		 */
 		info = list_first_entry(&context->records_list,
 					struct tls_record_info, list);
-
-		/* send the start_marker record if seq number is before the
-		 * tls offload start marker sequence number. This record is
-		 * required to handle TCP packets which are before TLS offload
-		 * started.
-		 *  And if it's not start marker, look if this seq number
-		 * belongs to the list.
-		 */
-		if (likely(!tls_record_is_start_marker(info))) {
-			/* we have the first record, get the last record to see
-			 * if this seq number belongs to the list.
-			 */
-			last = list_last_entry(&context->records_list,
-					       struct tls_record_info, list);
-
-			if (!between(seq, tls_record_start_seq(info),
-				     last->end_seq))
-				return NULL;
-		}
 		record_sn = context->unacked_record_sn;
 	}
 
@@ -568,152 +520,11 @@ static int tls_device_push_pending_record(struct sock *sk, int flags)
 	return tls_push_data(sk, &msg_iter, 0, flags, TLS_RECORD_TYPE_DATA);
 }
 
-static void tls_device_resync_rx(struct tls_context *tls_ctx,
-				 struct sock *sk, u32 seq, u64 rcd_sn)
-{
-	struct net_device *netdev;
-
-	if (WARN_ON(test_and_set_bit(TLS_RX_SYNC_RUNNING, &tls_ctx->flags)))
-		return;
-	netdev = READ_ONCE(tls_ctx->netdev);
-	if (netdev)
-		netdev->tlsdev_ops->tls_dev_resync_rx(netdev, sk, seq, rcd_sn);
-	clear_bit_unlock(TLS_RX_SYNC_RUNNING, &tls_ctx->flags);
-}
-
-void handle_device_resync(struct sock *sk, u32 seq, u64 rcd_sn)
-{
-	struct tls_context *tls_ctx = tls_get_ctx(sk);
-	struct tls_offload_context_rx *rx_ctx;
-	u32 is_req_pending;
-	s64 resync_req;
-	u32 req_seq;
-
-	if (tls_ctx->rx_conf != TLS_HW)
-		return;
-
-	rx_ctx = tls_offload_ctx_rx(tls_ctx);
-	resync_req = atomic64_read(&rx_ctx->resync_req);
-	req_seq = ntohl(resync_req >> 32) - ((u32)TLS_HEADER_SIZE - 1);
-	is_req_pending = resync_req;
-
-	if (unlikely(is_req_pending) && req_seq == seq &&
-	    atomic64_try_cmpxchg(&rx_ctx->resync_req, &resync_req, 0)) {
-		seq += TLS_HEADER_SIZE - 1;
-		tls_device_resync_rx(tls_ctx, sk, seq, rcd_sn);
-	}
-}
-
-static int tls_device_reencrypt(struct sock *sk, struct sk_buff *skb)
-{
-	struct strp_msg *rxm = strp_msg(skb);
-	int err = 0, offset = rxm->offset, copy, nsg, data_len, pos;
-	struct sk_buff *skb_iter, *unused;
-	struct scatterlist sg[1];
-	char *orig_buf, *buf;
-
-	orig_buf = kmalloc(rxm->full_len + TLS_HEADER_SIZE +
-			   TLS_CIPHER_AES_GCM_128_IV_SIZE, sk->sk_allocation);
-	if (!orig_buf)
-		return -ENOMEM;
-	buf = orig_buf;
-
-	nsg = skb_cow_data(skb, 0, &unused);
-	if (unlikely(nsg < 0)) {
-		err = nsg;
-		goto free_buf;
-	}
-
-	sg_init_table(sg, 1);
-	sg_set_buf(&sg[0], buf,
-		   rxm->full_len + TLS_HEADER_SIZE +
-		   TLS_CIPHER_AES_GCM_128_IV_SIZE);
-	skb_copy_bits(skb, offset, buf,
-		      TLS_HEADER_SIZE + TLS_CIPHER_AES_GCM_128_IV_SIZE);
-
-	/* We are interested only in the decrypted data not the auth */
-	err = decrypt_skb(sk, skb, sg);
-	if (err != -EBADMSG)
-		goto free_buf;
-	else
-		err = 0;
-
-	data_len = rxm->full_len - TLS_CIPHER_AES_GCM_128_TAG_SIZE;
-
-	if (skb_pagelen(skb) > offset) {
-		copy = min_t(int, skb_pagelen(skb) - offset, data_len);
-
-		if (skb->decrypted)
-			skb_store_bits(skb, offset, buf, copy);
-
-		offset += copy;
-		buf += copy;
-	}
-
-	pos = skb_pagelen(skb);
-	skb_walk_frags(skb, skb_iter) {
-		int frag_pos;
-
-		/* Practically all frags must belong to msg if reencrypt
-		 * is needed with current strparser and coalescing logic,
-		 * but strparser may "get optimized", so let's be safe.
-		 */
-		if (pos + skb_iter->len <= offset)
-			goto done_with_frag;
-		if (pos >= data_len + rxm->offset)
-			break;
-
-		frag_pos = offset - pos;
-		copy = min_t(int, skb_iter->len - frag_pos,
-			     data_len + rxm->offset - offset);
-
-		if (skb_iter->decrypted)
-			skb_store_bits(skb_iter, frag_pos, buf, copy);
-
-		offset += copy;
-		buf += copy;
-done_with_frag:
-		pos += skb_iter->len;
-	}
-
-free_buf:
-	kfree(orig_buf);
-	return err;
-}
-
-int tls_device_decrypted(struct sock *sk, struct sk_buff *skb)
-{
-	struct tls_context *tls_ctx = tls_get_ctx(sk);
-	struct tls_offload_context_rx *ctx = tls_offload_ctx_rx(tls_ctx);
-	int is_decrypted = skb->decrypted;
-	int is_encrypted = !is_decrypted;
-	struct sk_buff *skb_iter;
-
-	/* Skip if it is already decrypted */
-	if (ctx->sw.decrypted)
-		return 0;
-
-	/* Check if all the data is decrypted already */
-	skb_walk_frags(skb, skb_iter) {
-		is_decrypted &= skb_iter->decrypted;
-		is_encrypted &= !skb_iter->decrypted;
-	}
-
-	ctx->sw.decrypted |= is_decrypted;
-
-	/* Return immedeatly if the record is either entirely plaintext or
-	 * entirely ciphertext. Otherwise handle reencrypt partially decrypted
-	 * record.
-	 */
-	return (is_encrypted || is_decrypted) ? 0 :
-		tls_device_reencrypt(sk, skb);
-}
-
 int tls_set_device_offload(struct sock *sk, struct tls_context *ctx)
 {
 	u16 nonce_size, tag_size, iv_size, rec_seq_size;
 	struct tls_record_info *start_marker_record;
-	struct tls_offload_context_tx *offload_ctx;
+	struct tls_offload_context *offload_ctx;
 	struct tls_crypto_info *crypto_info;
 	struct net_device *netdev;
 	char *iv, *rec_seq;
@@ -735,13 +546,13 @@ int tls_set_device_offload(struct sock *sk, struct tls_context *ctx)
 		goto out;
 	}
 
-	offload_ctx = kzalloc(TLS_OFFLOAD_CONTEXT_SIZE_TX, GFP_KERNEL);
+	offload_ctx = kzalloc(TLS_OFFLOAD_CONTEXT_SIZE, GFP_KERNEL);
 	if (!offload_ctx) {
 		rc = -ENOMEM;
 		goto free_marker_record;
 	}
 
-	crypto_info = &ctx->crypto_send.info;
+	crypto_info = &ctx->crypto_send;
 	switch (crypto_info->cipher_type) {
 	case TLS_CIPHER_AES_GCM_128:
 		nonce_size = TLS_CIPHER_AES_GCM_128_IV_SIZE;
@@ -771,11 +582,12 @@ int tls_set_device_offload(struct sock *sk, struct tls_context *ctx)
 	memcpy(ctx->tx.iv + TLS_CIPHER_AES_GCM_128_SALT_SIZE, iv, iv_size);
 
 	ctx->tx.rec_seq_size = rec_seq_size;
-	ctx->tx.rec_seq = kmemdup(rec_seq, rec_seq_size, GFP_KERNEL);
+	ctx->tx.rec_seq = kmalloc(rec_seq_size, GFP_KERNEL);
 	if (!ctx->tx.rec_seq) {
 		rc = -ENOMEM;
 		goto free_iv;
 	}
+	memcpy(ctx->tx.rec_seq, rec_seq, rec_seq_size);
 
 	rc = tls_sw_fallback_init(sk, offload_ctx, crypto_info);
 	if (rc)
@@ -792,11 +604,10 @@ int tls_set_device_offload(struct sock *sk, struct tls_context *ctx)
 	INIT_LIST_HEAD(&offload_ctx->records_list);
 	list_add_tail(&start_marker_record->list, &offload_ctx->records_list);
 	spin_lock_init(&offload_ctx->lock);
-	sg_init_table(offload_ctx->sg_tx_data,
-		      ARRAY_SIZE(offload_ctx->sg_tx_data));
 
 	clean_acked_data_enable(inet_csk(sk), &tls_icsk_clean_acked);
 	ctx->push_pending_record = tls_device_push_pending_record;
+	offload_ctx->sk_destruct = sk->sk_destruct;
 
 	/* TLS offload is greatly simplified if we don't send
 	 * SKBs where only part of the payload needs to be encrypted.
@@ -805,6 +616,8 @@ int tls_set_device_offload(struct sock *sk, struct tls_context *ctx)
 	skb = tcp_write_queue_tail(sk);
 	if (skb)
 		TCP_SKB_CB(skb)->eor = 1;
+
+	refcount_set(&ctx->refcount, 1);
 
 	/* We support starting offload on multiple sockets
 	 * concurrently, so we only need a read lock here.
@@ -835,19 +648,24 @@ int tls_set_device_offload(struct sock *sk, struct tls_context *ctx)
 
 	ctx->priv_ctx_tx = offload_ctx;
 	rc = netdev->tlsdev_ops->tls_dev_add(netdev, sk, TLS_OFFLOAD_CTX_DIR_TX,
-					     &ctx->crypto_send.info,
+					     &ctx->crypto_send,
 					     tcp_sk(sk)->write_seq);
 	if (rc)
 		goto release_netdev;
 
-	tls_device_attach(ctx, sk, netdev);
+	ctx->netdev = netdev;
 
+	spin_lock_irq(&tls_device_lock);
+	list_add_tail(&ctx->list, &tls_device_list);
+	spin_unlock_irq(&tls_device_lock);
+
+	sk->sk_validate_xmit_skb = tls_validate_xmit_skb;
 	/* following this assignment tls_is_sk_tx_device_offloaded
 	 * will return true and the context might be accessed
 	 * by the netdev's xmit function.
 	 */
-	smp_store_release(&sk->sk_validate_xmit_skb, tls_validate_xmit_skb);
-	dev_put(netdev);
+	smp_store_release(&sk->sk_destruct,
+			  &tls_device_sk_destruct);
 	up_read(&device_offload_lock);
 	goto out;
 
@@ -870,101 +688,6 @@ out:
 	return rc;
 }
 
-int tls_set_device_offload_rx(struct sock *sk, struct tls_context *ctx)
-{
-	struct tls_offload_context_rx *context;
-	struct net_device *netdev;
-	int rc = 0;
-
-	/* We support starting offload on multiple sockets
-	 * concurrently, so we only need a read lock here.
-	 * This lock must precede get_netdev_for_sock to prevent races between
-	 * NETDEV_DOWN and setsockopt.
-	 */
-	down_read(&device_offload_lock);
-	netdev = get_netdev_for_sock(sk);
-	if (!netdev) {
-		pr_err_ratelimited("%s: netdev not found\n", __func__);
-		rc = -EINVAL;
-		goto release_lock;
-	}
-
-	if (!(netdev->features & NETIF_F_HW_TLS_RX)) {
-		pr_err_ratelimited("%s: netdev %s with no TLS offload\n",
-				   __func__, netdev->name);
-		rc = -ENOTSUPP;
-		goto release_netdev;
-	}
-
-	/* Avoid offloading if the device is down
-	 * We don't want to offload new flows after
-	 * the NETDEV_DOWN event
-	 */
-	if (!(netdev->flags & IFF_UP)) {
-		rc = -EINVAL;
-		goto release_netdev;
-	}
-
-	context = kzalloc(TLS_OFFLOAD_CONTEXT_SIZE_RX, GFP_KERNEL);
-	if (!context) {
-		rc = -ENOMEM;
-		goto release_netdev;
-	}
-
-	ctx->priv_ctx_rx = context;
-	rc = tls_set_sw_offload(sk, ctx, 0);
-	if (rc)
-		goto release_ctx;
-
-	rc = netdev->tlsdev_ops->tls_dev_add(netdev, sk, TLS_OFFLOAD_CTX_DIR_RX,
-					     &ctx->crypto_recv.info,
-					     tcp_sk(sk)->copied_seq);
-	if (rc) {
-		pr_err_ratelimited("%s: The netdev has refused to offload this socket\n",
-				   __func__);
-		goto free_sw_resources;
-	}
-
-	tls_device_attach(ctx, sk, netdev);
-	goto release_netdev;
-
-free_sw_resources:
-	up_read(&device_offload_lock);
-	tls_sw_free_resources_rx(sk);
-	down_read(&device_offload_lock);
-release_ctx:
-	ctx->priv_ctx_rx = NULL;
-release_netdev:
-	dev_put(netdev);
-release_lock:
-	up_read(&device_offload_lock);
-	return rc;
-}
-
-void tls_device_offload_cleanup_rx(struct sock *sk)
-{
-	struct tls_context *tls_ctx = tls_get_ctx(sk);
-	struct net_device *netdev;
-
-	down_read(&device_offload_lock);
-	netdev = tls_ctx->netdev;
-	if (!netdev)
-		goto out;
-
-	netdev->tlsdev_ops->tls_dev_del(netdev, tls_ctx,
-					TLS_OFFLOAD_CTX_DIR_RX);
-
-	if (tls_ctx->tx_conf != TLS_HW) {
-		dev_put(netdev);
-		tls_ctx->netdev = NULL;
-	} else {
-		set_bit(TLS_RX_DEV_CLOSED, &tls_ctx->flags);
-	}
-out:
-	up_read(&device_offload_lock);
-	tls_sw_release_resources_rx(sk);
-}
-
 static int tls_device_down(struct net_device *netdev)
 {
 	struct tls_context *ctx, *tmp;
@@ -985,17 +708,9 @@ static int tls_device_down(struct net_device *netdev)
 	spin_unlock_irqrestore(&tls_device_lock, flags);
 
 	list_for_each_entry_safe(ctx, tmp, &list, list)	{
-		if (ctx->tx_conf == TLS_HW)
-			netdev->tlsdev_ops->tls_dev_del(netdev, ctx,
-							TLS_OFFLOAD_CTX_DIR_TX);
-		if (ctx->rx_conf == TLS_HW &&
-		    !test_bit(TLS_RX_DEV_CLOSED, &ctx->flags))
-			netdev->tlsdev_ops->tls_dev_del(netdev, ctx,
-							TLS_OFFLOAD_CTX_DIR_RX);
-		WRITE_ONCE(ctx->netdev, NULL);
-		smp_mb__before_atomic(); /* pairs with test_and_set_bit() */
-		while (test_bit(TLS_RX_SYNC_RUNNING, &ctx->flags))
-			usleep_range(10, 200);
+		netdev->tlsdev_ops->tls_dev_del(netdev, ctx,
+						TLS_OFFLOAD_CTX_DIR_TX);
+		ctx->netdev = NULL;
 		dev_put(netdev);
 		list_del_init(&ctx->list);
 
@@ -1015,17 +730,12 @@ static int tls_dev_event(struct notifier_block *this, unsigned long event,
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
-	if (!dev->tlsdev_ops &&
-	    !(dev->features & (NETIF_F_HW_TLS_RX | NETIF_F_HW_TLS_TX)))
+	if (!(dev->features & NETIF_F_HW_TLS_TX))
 		return NOTIFY_DONE;
 
 	switch (event) {
 	case NETDEV_REGISTER:
 	case NETDEV_FEAT_CHANGE:
-		if ((dev->features & NETIF_F_HW_TLS_RX) &&
-		    !dev->tlsdev_ops->tls_dev_resync_rx)
-			return NOTIFY_BAD;
-
 		if  (dev->tlsdev_ops &&
 		     dev->tlsdev_ops->tls_dev_add &&
 		     dev->tlsdev_ops->tls_dev_del)
