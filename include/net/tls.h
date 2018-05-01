@@ -285,6 +285,7 @@ struct tls_context {
 	u16 partially_sent_offset;
 
 	unsigned long flags;
+	bool in_tcp_sendpages;
 
 	int (*push_pending_record)(struct sock *sk, int flags);
 
