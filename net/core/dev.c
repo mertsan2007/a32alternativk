@@ -3960,7 +3960,6 @@ static u32 netif_receive_generic_xdp(struct sk_buff *skb,
 	struct netdev_rx_queue *rxqueue;
 	void *orig_data, *orig_data_end;
 	u32 metalen, act = XDP_DROP;
-	struct xdp_buff xdp;
 	int hlen, off;
 	u32 mac_len;
 
@@ -3995,17 +3994,17 @@ static u32 netif_receive_generic_xdp(struct sk_buff *skb,
 	 */
 	mac_len = skb->data - skb_mac_header(skb);
 	hlen = skb_headlen(skb) + mac_len;
-	xdp.data = skb->data - mac_len;
-	xdp.data_meta = xdp.data;
-	xdp.data_end = xdp.data + hlen;
-	xdp.data_hard_start = skb->data - skb_headroom(skb);
-	orig_data_end = xdp.data_end;
-	orig_data = xdp.data;
+	xdp->data = skb->data - mac_len;
+	xdp->data_meta = xdp->data;
+	xdp->data_end = xdp->data + hlen;
+	xdp->data_hard_start = skb->data - skb_headroom(skb);
+	orig_data_end = xdp->data_end;
+	orig_data = xdp->data;
 
 	rxqueue = netif_get_rxqueue(skb);
-	xdp.rxq = &rxqueue->xdp_rxq;
+	xdp->rxq = &rxqueue->xdp_rxq;
 
-	act = bpf_prog_run_xdp(xdp_prog, &xdp);
+	act = bpf_prog_run_xdp(xdp_prog, xdp);
 
 	off = xdp->data - orig_data;
 	if (off > 0)
@@ -4017,10 +4016,11 @@ static u32 netif_receive_generic_xdp(struct sk_buff *skb,
 	/* check if bpf_xdp_adjust_tail was used. it can only "shrink"
 	 * pckt.
 	 */
-	off = orig_data_end - xdp.data_end;
+	off = orig_data_end - xdp->data_end;
 	if (off != 0) {
-		skb_set_tail_pointer(skb, xdp.data_end - xdp.data);
+		skb_set_tail_pointer(skb, xdp->data_end - xdp->data);
 		skb->len -= off;
+
 	}
 
 	switch (act) {
@@ -4029,7 +4029,7 @@ static u32 netif_receive_generic_xdp(struct sk_buff *skb,
 		__skb_push(skb, mac_len);
 		break;
 	case XDP_PASS:
-		metalen = xdp.data - xdp.data_meta;
+		metalen = xdp->data - xdp->data_meta;
 		if (metalen)
 			skb_metadata_set(skb, metalen);
 		break;
