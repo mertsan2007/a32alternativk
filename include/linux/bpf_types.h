@@ -49,6 +49,9 @@ BPF_MAP_TYPE(BPF_MAP_TYPE_DEVMAP, dev_map_ops)
 BPF_MAP_TYPE(BPF_MAP_TYPE_SOCKMAP, sock_map_ops)
 #endif
 BPF_MAP_TYPE(BPF_MAP_TYPE_CPUMAP, cpu_map_ops)
+#if defined(CONFIG_XDP_SOCKETS)
+BPF_MAP_TYPE(BPF_MAP_TYPE_XSKMAP, xsk_map_ops)
+#endif
 #endif
 #ifdef CONFIG_INET
 BPF_MAP_TYPE(BPF_MAP_TYPE_REUSEPORT_SOCKARRAY, reuseport_array_ops)
