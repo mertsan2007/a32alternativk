@@ -765,10 +765,7 @@ emit_clear:
 			else
 				func = (u8 *) __bpf_call_base + imm;
 
-			ret = bpf_jit_get_func_addr(fp, &insn[i], extra_pass,
-						    &func_addr, &func_addr_fixed);
-			if (ret < 0)
-				return ret;
+			bpf_jit_emit_func_call(image, ctx, (u64)func);
 
 			if (func_addr_fixed)
 				bpf_jit_emit_func_call_hlp(image, ctx, func_addr);
