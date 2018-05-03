@@ -162,6 +162,87 @@ BPF_CALL_3(bpf_skb_get_nlattr_nest, struct sk_buff *, skb, u32, a, u32, x)
 	return 0;
 }
 
+BPF_CALL_4(bpf_skb_load_helper_8, const struct sk_buff *, skb, const void *,
+	   data, int, headlen, int, offset)
+{
+	u8 tmp, *ptr;
+	const int len = sizeof(tmp);
+
+	if (offset >= 0) {
+		if (headlen - offset >= len)
+			return *(u8 *)(data + offset);
+		if (!skb_copy_bits(skb, offset, &tmp, sizeof(tmp)))
+			return tmp;
+	} else {
+		ptr = bpf_internal_load_pointer_neg_helper(skb, offset, len);
+		if (likely(ptr))
+			return *(u8 *)ptr;
+	}
+
+	return -EFAULT;
+}
+
+BPF_CALL_2(bpf_skb_load_helper_8_no_cache, const struct sk_buff *, skb,
+	   int, offset)
+{
+	return ____bpf_skb_load_helper_8(skb, skb->data, skb->len - skb->data_len,
+					 offset);
+}
+
+BPF_CALL_4(bpf_skb_load_helper_16, const struct sk_buff *, skb, const void *,
+	   data, int, headlen, int, offset)
+{
+	u16 tmp, *ptr;
+	const int len = sizeof(tmp);
+
+	if (offset >= 0) {
+		if (headlen - offset >= len)
+			return get_unaligned_be16(data + offset);
+		if (!skb_copy_bits(skb, offset, &tmp, sizeof(tmp)))
+			return be16_to_cpu(tmp);
+	} else {
+		ptr = bpf_internal_load_pointer_neg_helper(skb, offset, len);
+		if (likely(ptr))
+			return get_unaligned_be16(ptr);
+	}
+
+	return -EFAULT;
+}
+
+BPF_CALL_2(bpf_skb_load_helper_16_no_cache, const struct sk_buff *, skb,
+	   int, offset)
+{
+	return ____bpf_skb_load_helper_16(skb, skb->data, skb->len - skb->data_len,
+					  offset);
+}
+
+BPF_CALL_4(bpf_skb_load_helper_32, const struct sk_buff *, skb, const void *,
+	   data, int, headlen, int, offset)
+{
+	u32 tmp, *ptr;
+	const int len = sizeof(tmp);
+
+	if (likely(offset >= 0)) {
+		if (headlen - offset >= len)
+			return get_unaligned_be32(data + offset);
+		if (!skb_copy_bits(skb, offset, &tmp, sizeof(tmp)))
+			return be32_to_cpu(tmp);
+	} else {
+		ptr = bpf_internal_load_pointer_neg_helper(skb, offset, len);
+		if (likely(ptr))
+			return get_unaligned_be32(ptr);
+	}
+
+	return -EFAULT;
+}
+
+BPF_CALL_2(bpf_skb_load_helper_32_no_cache, const struct sk_buff *, skb,
+	   int, offset)
+{
+	return ____bpf_skb_load_helper_32(skb, skb->data, skb->len - skb->data_len,
+					  offset);
+}
+
 BPF_CALL_0(bpf_get_raw_cpu_id)
 {
 	return raw_smp_processor_id();
@@ -370,22 +451,11 @@ static bool convert_bpf_ld_abs(struct sock_filter *fp, struct bpf_insn **insnp)
 	     (!unaligned_ok && offset >= 0 &&
 	      offset + ip_align >= 0 &&
 	      offset + ip_align % size == 0))) {
-		bool ldx_off_ok = offset <= S16_MAX;
-
 		*insn++ = BPF_MOV64_REG(BPF_REG_TMP, BPF_REG_H);
-		if (offset)
-			*insn++ = BPF_ALU64_IMM(BPF_SUB, BPF_REG_TMP, offset);
-		*insn++ = BPF_JMP_IMM(BPF_JSLT, BPF_REG_TMP,
-				      size, 2 + endian + (!ldx_off_ok * 2));
-		if (ldx_off_ok) {
-			*insn++ = BPF_LDX_MEM(BPF_SIZE(fp->code), BPF_REG_A,
-					      BPF_REG_D, offset);
-		} else {
-			*insn++ = BPF_MOV64_REG(BPF_REG_TMP, BPF_REG_D);
-			*insn++ = BPF_ALU64_IMM(BPF_ADD, BPF_REG_TMP, offset);
-			*insn++ = BPF_LDX_MEM(BPF_SIZE(fp->code), BPF_REG_A,
-					      BPF_REG_TMP, 0);
-		}
+		*insn++ = BPF_ALU64_IMM(BPF_SUB, BPF_REG_TMP, offset);
+		*insn++ = BPF_JMP_IMM(BPF_JSLT, BPF_REG_TMP, size, 2 + endian);
+		*insn++ = BPF_LDX_MEM(BPF_SIZE(fp->code), BPF_REG_A, BPF_REG_D,
+				      offset);
 		if (endian)
 			*insn++ = BPF_ENDIAN(BPF_FROM_BE, BPF_REG_A, size * 8);
 		*insn++ = BPF_JMP_A(8);
@@ -4969,6 +5039,8 @@ static int bpf_gen_ld_abs(const struct bpf_insn *orig,
 	bool indirect = BPF_MODE(orig->code) == BPF_IND;
 	struct bpf_insn *insn = insn_buf;
 
+	/* We're guaranteed here that CTX is in R6. */
+	*insn++ = BPF_MOV64_REG(BPF_REG_1, BPF_REG_CTX);
 	if (!indirect) {
 		*insn++ = BPF_MOV64_IMM(BPF_REG_2, orig->imm);
 	} else {
@@ -4976,8 +5048,6 @@ static int bpf_gen_ld_abs(const struct bpf_insn *orig,
 		if (orig->imm)
 			*insn++ = BPF_ALU64_IMM(BPF_ADD, BPF_REG_2, orig->imm);
 	}
-	/* We're guaranteed here that CTX is in R6. */
-	*insn++ = BPF_MOV64_REG(BPF_REG_1, BPF_REG_CTX);
 
 	switch (BPF_SIZE(orig->code)) {
 	case BPF_B:
@@ -6441,6 +6511,7 @@ const struct bpf_verifier_ops tc_cls_act_verifier_ops = {
 	.is_valid_access	= tc_cls_act_is_valid_access,
 	.convert_ctx_access	= tc_cls_act_convert_ctx_access,
 	.gen_prologue		= tc_cls_act_prologue,
+	.gen_ld_abs		= bpf_gen_ld_abs,
 };
 
 const struct bpf_prog_ops tc_cls_act_prog_ops = {

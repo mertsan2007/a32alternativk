@@ -905,27 +905,6 @@ static int bpf_jit_blind_insn(const struct bpf_insn *from,
 		*to++ = BPF_JMP_REG(from->code, from->dst_reg, BPF_REG_AX, off);
 		break;
 
-	case BPF_JMP32 | BPF_JEQ  | BPF_K:
-	case BPF_JMP32 | BPF_JNE  | BPF_K:
-	case BPF_JMP32 | BPF_JGT  | BPF_K:
-	case BPF_JMP32 | BPF_JLT  | BPF_K:
-	case BPF_JMP32 | BPF_JGE  | BPF_K:
-	case BPF_JMP32 | BPF_JLE  | BPF_K:
-	case BPF_JMP32 | BPF_JSGT | BPF_K:
-	case BPF_JMP32 | BPF_JSLT | BPF_K:
-	case BPF_JMP32 | BPF_JSGE | BPF_K:
-	case BPF_JMP32 | BPF_JSLE | BPF_K:
-	case BPF_JMP32 | BPF_JSET | BPF_K:
-		/* Accommodate for extra offset in case of a backjump. */
-		off = from->off;
-		if (off < 0)
-			off -= 2;
-		*to++ = BPF_ALU32_IMM(BPF_MOV, BPF_REG_AX, imm_rnd ^ from->imm);
-		*to++ = BPF_ALU32_IMM(BPF_XOR, BPF_REG_AX, imm_rnd);
-		*to++ = BPF_JMP32_REG(from->code, from->dst_reg, BPF_REG_AX,
-				      off);
-		break;
-
 	case BPF_LD | BPF_IMM | BPF_DW:
 		*to++ = BPF_ALU64_IMM(BPF_MOV, BPF_REG_AX, imm_rnd ^ aux[1].imm);
 		*to++ = BPF_ALU64_IMM(BPF_XOR, BPF_REG_AX, imm_rnd);
@@ -1169,14 +1148,7 @@ EXPORT_SYMBOL_GPL(__bpf_call_base);
 	INSN_3(LDX, MEM, W),			\
 	INSN_3(LDX, MEM, DW),			\
 	/*   Immediate based. */		\
-	INSN_3(LD, IMM, DW),			\
-	/*   Misc (old cBPF carry-over). */	\
-	INSN_3(LD, ABS, B),			\
-	INSN_3(LD, ABS, H),			\
-	INSN_3(LD, ABS, W),			\
-	INSN_3(LD, IND, B),			\
-	INSN_3(LD, IND, H),			\
-	INSN_3(LD, IND, W)
+	INSN_3(LD, IMM, DW)
 
 bool bpf_opcode_in_insntable(u8 code)
 {
@@ -1186,6 +1158,13 @@ bool bpf_opcode_in_insntable(u8 code)
 		[0 ... 255] = false,
 		/* Now overwrite non-defaults ... */
 		BPF_INSN_MAP(BPF_INSN_2_TBL, BPF_INSN_3_TBL),
+		/* UAPI exposed, but rewritten opcodes. cBPF carry-over. */
+		[BPF_LD | BPF_ABS | BPF_B] = true,
+		[BPF_LD | BPF_ABS | BPF_H] = true,
+		[BPF_LD | BPF_ABS | BPF_W] = true,
+		[BPF_LD | BPF_IND | BPF_B] = true,
+		[BPF_LD | BPF_IND | BPF_H] = true,
+		[BPF_LD | BPF_IND | BPF_W] = true,
 	};
 #undef BPF_INSN_3_TBL
 #undef BPF_INSN_2_TBL

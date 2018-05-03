@@ -5236,6 +5236,11 @@ static int check_ld_abs(struct bpf_verifier_env *env, struct bpf_insn *insn)
 		return -EINVAL;
 	}
 
+	if (!env->ops->gen_ld_abs) {
+		verbose(env, "bpf verifier is misconfigured\n");
+		return -EINVAL;
+	}
+
 	if (env->subprog_cnt) {
 		/* when program has LD_ABS insn JITs and interpreter assume
 		 * that r1 == ctx == skb which is not the case for callees
