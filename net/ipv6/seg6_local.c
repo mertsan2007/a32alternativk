@@ -461,6 +461,69 @@ drop:
 
 DEFINE_PER_CPU(struct seg6_bpf_srh_state, seg6_bpf_srh_states);
 
+static int input_action_end_bpf(struct sk_buff *skb,
+				struct seg6_local_lwt *slwt)
+{
+	struct seg6_bpf_srh_state *srh_state =
+		this_cpu_ptr(&seg6_bpf_srh_states);
+	struct seg6_bpf_srh_state local_srh_state;
+	struct ipv6_sr_hdr *srh;
+	int srhoff = 0;
+	int ret;
+
+	srh = get_and_validate_srh(skb);
+	if (!srh)
+		goto drop;
+	advance_nextseg(srh, &ipv6_hdr(skb)->daddr);
+
+	/* preempt_disable is needed to protect the per-CPU buffer srh_state,
+	 * which is also accessed by the bpf_lwt_seg6_* helpers
+	 */
+	preempt_disable();
+	srh_state->hdrlen = srh->hdrlen << 3;
+	srh_state->valid = 1;
+
+	rcu_read_lock();
+	bpf_compute_data_pointers(skb);
+	ret = bpf_prog_run_save_cb(slwt->bpf.prog, skb);
+	rcu_read_unlock();
+
+	local_srh_state = *srh_state;
+	preempt_enable();
+
+	switch (ret) {
+	case BPF_OK:
+	case BPF_REDIRECT:
+		break;
+	case BPF_DROP:
+		goto drop;
+	default:
+		pr_warn_once("bpf-seg6local: Illegal return value %u\n", ret);
+		goto drop;
+	}
+
+	if (unlikely((local_srh_state.hdrlen & 7) != 0))
+		goto drop;
+
+	if (ipv6_find_hdr(skb, &srhoff, IPPROTO_ROUTING, NULL, NULL) < 0)
+		goto drop;
+	srh = (struct ipv6_sr_hdr *)(skb->data + srhoff);
+	srh->hdrlen = (u8)(local_srh_state.hdrlen >> 3);
+
+	if (!local_srh_state.valid &&
+	    unlikely(!seg6_validate_srh(srh, (srh->hdrlen + 1) << 3)))
+		goto drop;
+
+	if (ret != BPF_REDIRECT)
+		seg6_lookup_nexthop(skb, NULL, 0);
+
+	return dst_input(skb);
+
+drop:
+	kfree_skb(skb);
+	return -EINVAL;
+}
+
 static struct seg6_action_desc seg6_action_table[] = {
 	{
 		.action		= SEG6_LOCAL_ACTION_END,
