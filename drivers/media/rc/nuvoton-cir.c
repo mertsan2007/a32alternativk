@@ -932,7 +932,23 @@ static int nvt_open(struct rc_dev *dev)
 {
 	struct nvt_dev *nvt = dev->priv;
 
-	nvt_enable_cir(nvt);
+	/* enable the CIR logical device */
+	nvt_enable_logical_dev(nvt, LOGICAL_DEV_CIR);
+
+	spin_lock_irqsave(&nvt->lock, flags);
+
+	/* set function enable flags */
+	nvt_cir_reg_write(nvt, CIR_IRCON_TXEN | CIR_IRCON_RXEN |
+			  CIR_IRCON_RXINV | CIR_IRCON_SAMPLE_PERIOD_SEL,
+			  CIR_IRCON);
+
+	/* clear all pending interrupts */
+	nvt_cir_reg_write(nvt, 0xff, CIR_IRSTS);
+
+	/* enable interrupts */
+	nvt_set_cir_iren(nvt);
+
+	spin_unlock_irqrestore(&nvt->lock, flags);
 
 	return 0;
 }
