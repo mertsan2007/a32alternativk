@@ -1881,15 +1881,11 @@ int rc_register_device(struct rc_dev *dev)
 		 dev->device_name ?: "Unspecified device", path ?: "N/A");
 	kfree(path);
 
-	/*
-	 * once the the input device is registered in rc_setup_rx_device,
-	 * userspace can open the input device and rc_open() will be called
-	 * as a result. This results in driver code being allowed to submit
-	 * keycodes with rc_keydown, so lirc must be registered first.
-	 */
-	if (dev->allowed_protocols != RC_PROTO_BIT_CEC) {
-		rc = ir_lirc_register(dev);
-		if (rc < 0)
+	dev->registered = true;
+
+	if (dev->driver_type != RC_DRIVER_IR_RAW_TX) {
+		rc = rc_setup_rx_device(dev);
+		if (rc)
 			goto out_dev;
 	}
 
@@ -1905,8 +1901,6 @@ int rc_register_device(struct rc_dev *dev)
 		if (rc < 0)
 			goto out_lirc;
 	}
-
-	dev->registered = true;
 
 	dev_dbg(&dev->dev, "Registered rc%u (driver: %s)\n", dev->minor,
 		dev->driver_name ? dev->driver_name : "unknown");
