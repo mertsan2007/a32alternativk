@@ -575,23 +575,16 @@ int bpf_check(struct bpf_prog **fp, union bpf_attr *attr);
 void bpf_patch_call_args(struct bpf_insn *insn, u32 stack_depth);
 
 /* Map specifics */
-struct net_device  *__dev_map_lookup_elem(struct bpf_map *map, u32 key);
+struct xdp_buff;
+
+struct bpf_dtab_netdev *__dev_map_lookup_elem(struct bpf_map *map, u32 key);
 void __dev_map_insert_ctx(struct bpf_map *map, u32 index);
 void __dev_map_flush(struct bpf_map *map);
-int dev_map_enqueue(struct bpf_dtab_netdev *dst, struct xdp_buff *xdp,
-		    struct net_device *dev_rx);
-int dev_map_generic_redirect(struct bpf_dtab_netdev *dst, struct sk_buff *skb,
-			     struct bpf_prog *xdp_prog);
-
-struct bpf_cpu_map_entry *__cpu_map_lookup_elem(struct bpf_map *map, u32 key);
-void __cpu_map_flush(struct bpf_map *map);
-int cpu_map_enqueue(struct bpf_cpu_map_entry *rcpu, struct xdp_buff *xdp,
-		    struct net_device *dev_rx);
+int dev_map_enqueue(struct bpf_dtab_netdev *dst, struct xdp_buff *xdp);
 
 struct bpf_cpu_map_entry *__cpu_map_lookup_elem(struct bpf_map *map, u32 key);
 void __cpu_map_insert_ctx(struct bpf_map *map, u32 index);
 void __cpu_map_flush(struct bpf_map *map);
-struct xdp_buff;
 int cpu_map_enqueue(struct bpf_cpu_map_entry *rcpu, struct xdp_buff *xdp,
 		    struct net_device *dev_rx);
 
@@ -734,6 +727,14 @@ static inline int bpf_prog_test_run_flow_dissector(struct bpf_prog *prog,
 	return -ENOTSUPP;
 }
 
+struct xdp_buff;
+struct bpf_dtab_netdev;
+
+static inline
+int dev_map_enqueue(struct bpf_dtab_netdev *dst, struct xdp_buff *xdp)
+{
+	return 0;
+}
 
 static inline
 struct bpf_cpu_map_entry *__cpu_map_lookup_elem(struct bpf_map *map, u32 key)
@@ -749,7 +750,6 @@ static inline void __cpu_map_flush(struct bpf_map *map)
 {
 }
 
-struct xdp_buff;
 static inline int cpu_map_enqueue(struct bpf_cpu_map_entry *rcpu,
 				  struct xdp_buff *xdp,
 				  struct net_device *dev_rx)

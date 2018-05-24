@@ -58,7 +58,7 @@ struct xdp_bulk_queue {
 };
 
 struct bpf_dtab_netdev {
-	struct net_device *dev;
+	struct net_device *dev; /* must be first member, due to tracepoint */
 	struct bpf_dtab *dtab;
 	struct xdp_bulk_queue __percpu *bulkq;
 	struct rcu_head rcu;
@@ -292,73 +292,26 @@ struct bpf_dtab_netdev *__dev_map_lookup_elem(struct bpf_map *map, u32 key)
 	return obj;
 }
 
-/* Runs under RCU-read-side, plus in softirq under NAPI protection.
- * Thus, safe percpu variable access.
- */
-static int bq_enqueue(struct bpf_dtab_netdev *obj, struct xdp_frame *xdpf,
-		      struct net_device *dev_rx)
-
-{
-	struct list_head *flush_list = this_cpu_ptr(obj->dtab->flush_list);
-	struct xdp_bulk_queue *bq = this_cpu_ptr(obj->bulkq);
-
-	if (unlikely(bq->count == DEV_MAP_BULK_SIZE))
-		bq_xmit_all(bq, 0);
-
-	/* Ingress dev_rx will be the same for all xdp_frame's in
-	 * bulk_queue, because bq stored per-CPU and must be flushed
-	 * from net_device drivers NAPI func end.
-	 */
-	if (!bq->dev_rx)
-		bq->dev_rx = dev_rx;
-
-	bq->q[bq->count++] = xdpf;
-
-	if (!bq->flush_node.prev)
-		list_add(&bq->flush_node, flush_list);
-
-	return 0;
-}
-
-int dev_map_enqueue(struct bpf_dtab_netdev *dst, struct xdp_buff *xdp,
-		    struct net_device *dev_rx)
+int dev_map_enqueue(struct bpf_dtab_netdev *dst, struct xdp_buff *xdp)
 {
 	struct net_device *dev = dst->dev;
 	struct xdp_frame *xdpf;
-	int err;
 
 	if (!dev->netdev_ops->ndo_xdp_xmit)
 		return -EOPNOTSUPP;
-
-	err = xdp_ok_fwd_dev(dev, xdp->data_end - xdp->data);
-	if (unlikely(err))
-		return err;
 
 	xdpf = convert_to_xdp_frame(xdp);
 	if (unlikely(!xdpf))
 		return -EOVERFLOW;
 
-	return bq_enqueue(dst, xdpf, dev_rx);
-}
-
-int dev_map_generic_redirect(struct bpf_dtab_netdev *dst, struct sk_buff *skb,
-			     struct bpf_prog *xdp_prog)
-{
-	int err;
-
-	err = xdp_ok_fwd_dev(dst->dev, skb->len);
-	if (unlikely(err))
-		return err;
-	skb->dev = dst->dev;
-	generic_xdp_tx(skb, xdp_prog);
-
-	return 0;
+	/* TODO: implement a bulking/enqueue step later */
+	return dev->netdev_ops->ndo_xdp_xmit(dev, xdpf);
 }
 
 static void *dev_map_lookup_elem(struct bpf_map *map, void *key)
 {
 	struct bpf_dtab_netdev *obj = __dev_map_lookup_elem(map, *(u32 *)key);
-	struct net_device *dev = obj ? obj->dev : NULL;
+	struct net_device *dev = dev = obj ? obj->dev : NULL;
 
 	return dev ? &dev->ifindex : NULL;
 }
