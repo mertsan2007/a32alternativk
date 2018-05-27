@@ -73,16 +73,8 @@ lirc_mode2_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 		return &bpf_map_update_elem_proto;
 	case BPF_FUNC_map_delete_elem:
 		return &bpf_map_delete_elem_proto;
-	case BPF_FUNC_map_push_elem:
-		return &bpf_map_push_elem_proto;
-	case BPF_FUNC_map_pop_elem:
-		return &bpf_map_pop_elem_proto;
-	case BPF_FUNC_map_peek_elem:
-		return &bpf_map_peek_elem_proto;
 	case BPF_FUNC_ktime_get_ns:
 		return &bpf_ktime_get_ns_proto;
-	case BPF_FUNC_ktime_get_boot_ns:
-		return &bpf_ktime_get_boot_ns_proto;
 	case BPF_FUNC_tail_call:
 		return &bpf_tail_call_proto;
 	case BPF_FUNC_get_prandom_u32:
@@ -182,7 +174,6 @@ static int lirc_bpf_detach(struct rc_dev *rcdev, struct bpf_prog *prog)
 
 	rcu_assign_pointer(raw->progs, new_array);
 	bpf_prog_array_free(old_array);
-	bpf_prog_put(prog);
 unlock:
 	mutex_unlock(&ir_raw_handler_lock);
 	return ret;
@@ -204,33 +195,41 @@ void lirc_bpf_run(struct rc_dev *rcdev, u32 sample)
  */
 void lirc_bpf_free(struct rc_dev *rcdev)
 {
-	struct bpf_prog_array_item *item;
+	struct bpf_prog **progs;
 
 	if (!rcdev->raw->progs)
 		return;
 
-	item = rcu_dereference(rcdev->raw->progs)->items;
-	while (item->prog) {
-		bpf_prog_put(item->prog);
-		item++;
-	}
+	progs = rcu_dereference(rcdev->raw->progs)->progs;
+	while (*progs)
+		bpf_prog_put(*progs++);
 
 	bpf_prog_array_free(rcdev->raw->progs);
 }
 
-int lirc_prog_attach(const union bpf_attr *attr, struct bpf_prog *prog)
+int lirc_prog_attach(const union bpf_attr *attr)
 {
+	struct bpf_prog *prog;
 	struct rc_dev *rcdev;
 	int ret;
 
 	if (attr->attach_flags)
 		return -EINVAL;
 
+	prog = bpf_prog_get_type(attr->attach_bpf_fd,
+				 BPF_PROG_TYPE_LIRC_MODE2);
+	if (IS_ERR(prog))
+		return PTR_ERR(prog);
+
 	rcdev = rc_dev_get_from_fd(attr->target_fd);
-	if (IS_ERR(rcdev))
+	if (IS_ERR(rcdev)) {
+		bpf_prog_put(prog);
 		return PTR_ERR(rcdev);
+	}
 
 	ret = lirc_bpf_attach(rcdev, prog);
+	if (ret)
+		bpf_prog_put(prog);
 
 	put_device(&rcdev->dev);
 
@@ -303,8 +302,7 @@ int lirc_prog_query(const union bpf_attr *attr, union bpf_attr __user *uattr)
 	}
 
 	if (attr->query.prog_cnt != 0 && prog_ids && cnt)
-		ret = bpf_prog_array_copy_to_user(progs, prog_ids,
-						  attr->query.prog_cnt);
+		ret = bpf_prog_array_copy_to_user(progs, prog_ids, cnt);
 
 unlock:
 	mutex_unlock(&ir_raw_handler_lock);
