@@ -1786,6 +1786,7 @@ int bpf_prog_array_copy(struct bpf_prog_array *old_array,
 	int new_prog_cnt, carry_prog_cnt = 0;
 	struct bpf_prog **existing_prog;
 	struct bpf_prog_array *array;
+	bool found_exclude = false;
 	int new_prog_idx = 0;
 
 	/* Figure out how many existing progs we need to carry over to
@@ -1794,8 +1795,11 @@ int bpf_prog_array_copy(struct bpf_prog_array *old_array,
 	if (old_array) {
 		existing_prog = old_array->progs;
 		for (; *existing_prog; existing_prog++) {
-			if (*existing_prog != exclude_prog &&
-			    *existing_prog != &dummy_bpf_prog.prog)
+			if (*existing_prog == exclude_prog) {
+				found_exclude = true;
+				continue;
+			}
+			if (*existing_prog != &dummy_bpf_prog.prog)
 				carry_prog_cnt++;
 			if (*existing_prog == include_prog)
 				return -EEXIST;
