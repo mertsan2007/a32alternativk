@@ -4407,11 +4407,14 @@ BPF_CALL_5(bpf_skb_get_xfrm_state, struct sk_buff *, skb, u32, index,
 	to->reqid = x->props.reqid;
 	to->spi = x->id.spi;
 	to->family = x->props.family;
+	to->ext = 0;
+
 	if (to->family == AF_INET6) {
 		memcpy(to->remote_ipv6, x->props.saddr.a6,
 		       sizeof(to->remote_ipv6));
 	} else {
 		to->remote_ipv4 = x->props.saddr.a4;
+		memset(&to->remote_ipv6[1], 0, sizeof(__u32) * 3);
 	}
 
 	return 0;
