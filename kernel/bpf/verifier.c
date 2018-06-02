@@ -7144,6 +7144,8 @@ static int convert_ctx_accesses(struct bpf_verifier_env *env)
 		size_default = bpf_ctx_off_adjust_machine(ctx_field_size);
 		off = insn->off;
 		if (is_narrower_load) {
+			u32 size_default = bpf_ctx_off_adjust_machine(ctx_field_size);
+			u32 off = insn->off;
 			u8 size_code;
 
 			if (type == BPF_WRITE) {
