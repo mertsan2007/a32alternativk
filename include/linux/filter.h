@@ -19,6 +19,7 @@
 #include <linux/cryptohash.h>
 #include <linux/set_memory.h>
 #include <linux/kallsyms.h>
+#include <linux/if_vlan.h>
 
 #include <net/sch_generic.h>
 
@@ -1031,6 +1032,21 @@ static inline int xdp_ok_fwd_dev(const struct net_device *fwd,
 
 	len = fwd->mtu + fwd->hard_header_len + VLAN_HLEN;
 	if (pktlen > len)
+		return -EMSGSIZE;
+
+	return 0;
+}
+
+static inline int __xdp_generic_ok_fwd_dev(struct sk_buff *skb,
+					   struct net_device *fwd)
+{
+	unsigned int len;
+
+	if (unlikely(!(fwd->flags & IFF_UP)))
+		return -ENETDOWN;
+
+	len = fwd->mtu + fwd->hard_header_len + VLAN_HLEN;
+	if (skb->len > len)
 		return -EMSGSIZE;
 
 	return 0;
