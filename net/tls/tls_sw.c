@@ -1363,7 +1363,7 @@ int tls_sw_recvmsg(struct sock *sk,
 	struct sk_buff *skb;
 	ssize_t copied = 0;
 	bool cmsg = false;
-	int err = 0;
+	int target, err = 0;
 	long timeo;
 
 	flags |= nonblock;
@@ -1373,6 +1373,7 @@ int tls_sw_recvmsg(struct sock *sk,
 
 	lock_sock(sk);
 
+	target = sock_rcvlowat(sk, flags & MSG_WAITALL, len);
 	timeo = sock_rcvtimeo(sk, flags & MSG_DONTWAIT);
 	do {
 		bool zc = false;
@@ -1465,6 +1466,9 @@ fallback_to_reg_recv:
 					goto recv_end;
 			}
 		}
+		/* If we have a new message from strparser, continue now. */
+		if (copied >= target && !ctx->recv_pkt)
+			break;
 	} while (len);
 
 recv_end:
