@@ -289,17 +289,11 @@ tx_err:
 }
 
 static int tls_do_encryption(struct tls_context *tls_ctx,
-			     struct tls_sw_context_tx *ctx, size_t data_len,
-			     gfp_t flags)
+			     struct tls_sw_context_tx *ctx,
+			     struct aead_request *aead_req,
+			     size_t data_len)
 {
-	unsigned int req_size = sizeof(struct aead_request) +
-		crypto_aead_reqsize(ctx->aead_send);
-	struct aead_request *aead_req;
 	int rc;
-
-	aead_req = kzalloc(req_size, flags);
-	if (!aead_req)
-		return -ENOMEM;
 
 	ctx->sg_encrypted_data[0].offset += tls_ctx->tx.prepend_size;
 	ctx->sg_encrypted_data[0].length -= tls_ctx->tx.prepend_size;
@@ -317,7 +311,6 @@ static int tls_do_encryption(struct tls_context *tls_ctx,
 	ctx->sg_encrypted_data[0].offset -= tls_ctx->tx.prepend_size;
 	ctx->sg_encrypted_data[0].length += tls_ctx->tx.prepend_size;
 
-	kfree(aead_req);
 	return rc;
 }
 
@@ -444,7 +437,13 @@ static int tls_push_record(struct sock *sk, int flags,
 {
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
 	struct tls_sw_context_tx *ctx = tls_sw_ctx_tx(tls_ctx);
+	struct aead_request *req;
 	int rc;
+
+	req = kzalloc(sizeof(struct aead_request) +
+		      crypto_aead_reqsize(ctx->aead_send), sk->sk_allocation);
+	if (!req)
+		return -ENOMEM;
 
 	sg_mark_end(ctx->sg_plaintext_data + ctx->sg_plaintext_num_elem - 1);
 	sg_mark_end(ctx->sg_encrypted_data + ctx->sg_encrypted_num_elem - 1);
@@ -460,15 +459,14 @@ static int tls_push_record(struct sock *sk, int flags,
 
 	tls_ctx->pending_open_record_frags = false;
 
-	rc = tls_do_encryption(tls_ctx, ctx, ctx->sg_plaintext_size,
-			       sk->sk_allocation);
+	rc = tls_do_encryption(tls_ctx, ctx, req, ctx->sg_plaintext_size);
 	if (rc < 0) {
 		/* If we are called from write_space and
 		 * we fail, we need to set this SOCK_NOSPACE
 		 * to trigger another write_space in the future.
 		 */
 		set_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
-		return rc;
+		goto out_req;
 	}
 
 	return tls_tx_records(sk, flags);
@@ -494,6 +492,8 @@ static int bpf_exec_tx_verdict(struct sk_msg *msg, struct sock *sk,
 		tls_err_abort(sk, EBADMSG);
 
 	tls_advance_record_sn(sk, &tls_ctx->tx);
+out_req:
+	kfree(req);
 	return rc;
 }
 
