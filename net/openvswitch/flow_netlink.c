@@ -2247,8 +2247,6 @@ static int validate_and_copy_set_tun(const struct nlattr *attr,
 		case OVS_TUNNEL_KEY_ATTR_ERSPAN_OPTS:
 			dst_opt_type = TUNNEL_ERSPAN_OPT;
 			break;
-		case OVS_TUNNEL_KEY_ATTR_ERSPAN_OPTS:
-			break;
 		}
 	};
 
