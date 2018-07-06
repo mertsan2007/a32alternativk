@@ -1001,8 +1001,8 @@ static inline int xdp_ok_fwd_dev(const struct net_device *fwd,
 	return 0;
 }
 
-static inline int __xdp_generic_ok_fwd_dev(struct sk_buff *skb,
-					   struct net_device *fwd)
+static inline int xdp_ok_fwd_dev(const struct net_device *fwd,
+				 unsigned int pktlen)
 {
 	unsigned int len;
 
@@ -1010,7 +1010,7 @@ static inline int __xdp_generic_ok_fwd_dev(struct sk_buff *skb,
 		return -ENETDOWN;
 
 	len = fwd->mtu + fwd->hard_header_len + VLAN_HLEN;
-	if (skb->len > len)
+	if (pktlen > len)
 		return -EMSGSIZE;
 
 	return 0;
