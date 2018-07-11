@@ -58,14 +58,11 @@ static int tls_do_decryption(struct sock *sk,
 	struct aead_request *aead_req;
 
 	int ret;
-	unsigned int req_size = sizeof(struct aead_request) +
-		crypto_aead_reqsize(ctx->aead_recv);
 
-	aead_req = kzalloc(req_size, flags);
+	aead_req = aead_request_alloc(ctx->aead_recv, flags);
 	if (!aead_req)
 		return -ENOMEM;
 
-	aead_request_set_tfm(aead_req, ctx->aead_recv);
 	aead_request_set_ad(aead_req, TLS_AAD_SPACE_SIZE);
 	aead_request_set_crypt(aead_req, sgin, sgout,
 			       data_len + tls_ctx->rx.tag_size,
@@ -87,7 +84,7 @@ static int tls_do_decryption(struct sock *sk,
 	ctx->saved_data_ready(sk);
 
 out:
-	kfree(aead_req);
+	aead_request_free(aead_req);
 	return ret;
 }
 
@@ -440,8 +437,7 @@ static int tls_push_record(struct sock *sk, int flags,
 	struct aead_request *req;
 	int rc;
 
-	req = kzalloc(sizeof(struct aead_request) +
-		      crypto_aead_reqsize(ctx->aead_send), sk->sk_allocation);
+	req = aead_request_alloc(ctx->aead_send, sk->sk_allocation);
 	if (!req)
 		return -ENOMEM;
 
@@ -493,7 +489,7 @@ static int bpf_exec_tx_verdict(struct sk_msg *msg, struct sock *sk,
 
 	tls_advance_record_sn(sk, &tls_ctx->tx);
 out_req:
-	kfree(req);
+	aead_request_free(req);
 	return rc;
 }
 
