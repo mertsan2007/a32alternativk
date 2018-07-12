@@ -1340,9 +1340,13 @@ static u32 rtnl_xdp_prog_skb(struct net_device *dev)
 		return XDP_ATTACHED_NONE;
 
 	__dev_xdp_query(dev, ops->ndo_bpf, &xdp);
-	*prog_id = xdp.prog_id;
+	if (!xdp.prog_id)
+		return XDP_ATTACHED_NONE;
 
-	return xdp.prog_attached;
+	*prog_id = xdp.prog_id;
+	if (xdp.prog_flags & XDP_FLAGS_HW_MODE)
+		return XDP_ATTACHED_HW;
+	return XDP_ATTACHED_DRV;
 }
 
 static int rtnl_xdp_fill(struct sk_buff *skb, struct net_device *dev)
