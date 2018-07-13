@@ -86,6 +86,16 @@ struct tls_device {
 	void (*unhash)(struct tls_device *device, struct sock *sk);
 };
 
+enum {
+	TLS_BASE,
+	TLS_SW,
+#ifdef CONFIG_TLS_DEVICE
+	TLS_HW,
+#endif
+	TLS_HW_RECORD,
+	TLS_NUM_CONFIG,
+};
+
 struct tls_sw_context_tx {
 	struct crypto_aead *aead_send;
 	struct crypto_wait async_wait;
@@ -322,13 +332,11 @@ struct tls_offload_context_rx {
 	(ALIGN(sizeof(struct tls_offload_context_rx), sizeof(void *)) + \
 	 TLS_DRIVER_STATE_SIZE)
 
-void tls_ctx_free(struct tls_context *ctx);
 int wait_on_pending_writer(struct sock *sk, long *timeo);
 int tls_sk_query(struct sock *sk, int optname, char __user *optval,
 		int __user *optlen);
 int tls_sk_attach(struct sock *sk, int optname, char __user *optval,
 		  unsigned int optlen);
-
 
 int tls_set_sw_offload(struct sock *sk, struct tls_context *ctx, int tx);
 int tls_sw_sendmsg(struct sock *sk, struct msghdr *msg, size_t size);
@@ -407,11 +415,19 @@ static inline bool tls_is_pending_open_record(struct tls_context *tls_ctx)
 	return tls_ctx->pending_open_record_frags;
 }
 
+struct sk_buff *
+tls_validate_xmit_skb(struct sock *sk, struct net_device *dev,
+		      struct sk_buff *skb);
+
 static inline bool tls_is_sk_tx_device_offloaded(struct sock *sk)
 {
-	return sk_fullsock(sk) &&
-	       /* matches smp_store_release in tls_set_device_offload */
-	       smp_load_acquire(&sk->sk_destruct) == &tls_device_sk_destruct;
+#ifdef CONFIG_SOCK_VALIDATE_XMIT
+	return sk_fullsock(sk) &
+	       (smp_load_acquire(&sk->sk_validate_xmit_skb) ==
+	       &tls_validate_xmit_skb);
+#else
+	return false;
+#endif
 }
 
 static inline void tls_err_abort(struct sock *sk, int err)
@@ -504,12 +520,6 @@ tls_offload_ctx_tx(const struct tls_context *tls_ctx)
 	return (struct tls_offload_context_tx *)tls_ctx->priv_ctx_tx;
 }
 
-static inline struct tls_offload_context_tx *
-tls_offload_ctx_tx(const struct tls_context *tls_ctx)
-{
-	return (struct tls_offload_context_tx *)tls_ctx->priv_ctx_tx;
-}
-
 static inline struct tls_offload_context_rx *
 tls_offload_ctx_rx(const struct tls_context *tls_ctx)
 {
@@ -530,6 +540,7 @@ int tls_proccess_cmsg(struct sock *sk, struct msghdr *msg,
 		      unsigned char *record_type);
 void tls_register_device(struct tls_device *device);
 void tls_unregister_device(struct tls_device *device);
+int tls_device_decrypted(struct sock *sk, struct sk_buff *skb);
 int decrypt_skb(struct sock *sk, struct sk_buff *skb,
 		struct scatterlist *sgout);
 
@@ -540,5 +551,10 @@ struct sk_buff *tls_validate_xmit_skb(struct sock *sk,
 int tls_sw_fallback_init(struct sock *sk,
 			 struct tls_offload_context_tx *offload_ctx,
 			 struct tls_crypto_info *crypto_info);
+
+int tls_set_device_offload_rx(struct sock *sk, struct tls_context *ctx);
+
+void tls_device_offload_cleanup_rx(struct sock *sk);
+void handle_device_resync(struct sock *sk, u32 seq, u64 rcd_sn);
 
 #endif /* _TLS_OFFLOAD_H */
