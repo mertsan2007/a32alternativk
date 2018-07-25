@@ -932,6 +932,7 @@ ssize_t tls_sw_splice_read(struct socket *sock,  loff_t *ppos,
 	int record_room;
 	bool full_record;
 	int orig_size;
+	bool is_kvec = msg->msg_iter.type & ITER_KVEC;
 
 	if (msg->msg_flags & ~(MSG_MORE | MSG_DONTWAIT | MSG_NOSIGNAL))
 		return -ENOTSUPP;
@@ -984,8 +985,7 @@ alloc_encrypted:
 			try_to_copy -= required_size - ctx->sg_encrypted_size;
 			full_record = true;
 		}
-
-		if (full_record || eor) {
+		if (!is_kvec && (full_record || eor)) {
 			ret = zerocopy_from_iter(sk, &msg->msg_iter,
 				try_to_copy, &ctx->sg_plaintext_num_elem,
 				&ctx->sg_plaintext_size,
@@ -1388,6 +1388,7 @@ int tls_sw_recvmsg(struct sock *sk,
 	bool cmsg = false;
 	int target, err = 0;
 	long timeo;
+	bool is_kvec = msg->msg_iter.type & ITER_KVEC;
 
 	flags |= nonblock;
 
@@ -1431,7 +1432,7 @@ int tls_sw_recvmsg(struct sock *sk,
 			page_count = iov_iter_npages(&msg->msg_iter,
 						     MAX_SKB_FRAGS);
 			to_copy = rxm->full_len - tls_ctx->rx.overhead_size;
-			if (to_copy <= len && page_count < MAX_SKB_FRAGS &&
+			if (!is_kvec && to_copy <= len && page_count < MAX_SKB_FRAGS &&
 			    likely(!(flags & MSG_PEEK)))  {
 				struct scatterlist sgin[MAX_SKB_FRAGS + 1];
 				int pages = 0;
