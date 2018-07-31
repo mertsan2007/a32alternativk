@@ -5184,6 +5184,8 @@ sock_addr_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 		default:
 			return NULL;
 		}
+	case BPF_FUNC_get_socket_cookie:
+		return &bpf_get_socket_cookie_sock_addr_proto;
 	default:
 		return bpf_base_func_proto(func_id);
 	}
@@ -5330,6 +5332,8 @@ sock_ops_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 		return &bpf_sock_map_update_proto;
 	case BPF_FUNC_sock_hash_update:
 		return &bpf_sock_hash_update_proto;
+	case BPF_FUNC_get_socket_cookie:
+		return &bpf_get_socket_cookie_sock_ops_proto;
 	default:
 		return bpf_base_func_proto(func_id);
 	}
