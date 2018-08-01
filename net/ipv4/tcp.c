@@ -3050,9 +3050,6 @@ static size_t tcp_opt_stats_get_size(void)
 		nla_total_size(sizeof(u32)) + /* TCP_NLA_SND_SSTHRESH */
 		nla_total_size(sizeof(u32)) + /* TCP_NLA_DELIVERED */
 		nla_total_size(sizeof(u32)) + /* TCP_NLA_DELIVERED_CE */
-		nla_total_size_64bit(sizeof(u64)) + /* TCP_NLA_BYTES_SENT */
-		nla_total_size_64bit(sizeof(u64)) + /* TCP_NLA_BYTES_RETRANS */
-		nla_total_size(sizeof(u32)) + /* TCP_NLA_DSACK_DUPS */
 		0;
 }
 
@@ -3064,9 +3061,7 @@ struct sk_buff *tcp_get_timestamping_opt_stats(const struct sock *sk)
 	u64 rate64;
 	u32 rate;
 
-	stats = alloc_skb(7 * nla_total_size_64bit(sizeof(u64)) +
-			  7 * nla_total_size(sizeof(u32)) +
-			  3 * nla_total_size(sizeof(u8)), GFP_ATOMIC);
+	stats = alloc_skb(tcp_opt_stats_get_size(), GFP_ATOMIC);
 	if (!stats)
 		return NULL;
 
