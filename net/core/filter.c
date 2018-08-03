@@ -3354,7 +3354,7 @@ static int __bpf_tx_xdp_map(struct net_device *dev_rx, void *fwd,
 
 void xdp_do_flush_map(void)
 {
-	struct redirect_info *ri = this_cpu_ptr(&redirect_info);
+	struct bpf_redirect_info *ri = this_cpu_ptr(&bpf_redirect_info);
 	struct bpf_map *map = ri->map_to_flush;
 
 	ri->map_to_flush = NULL;
@@ -3399,7 +3399,7 @@ static inline bool xdp_map_invalid(const struct bpf_prog *xdp_prog,
 static int xdp_do_redirect_map(struct net_device *dev, struct xdp_buff *xdp,
 			       struct bpf_prog *xdp_prog)
 {
-	struct redirect_info *ri = this_cpu_ptr(&redirect_info);
+	struct bpf_redirect_info *ri = this_cpu_ptr(&bpf_redirect_info);
 	unsigned long map_owner = ri->map_owner;
 	struct bpf_map *map = ri->map;
 	u32 index = ri->ifindex;
@@ -3442,6 +3442,7 @@ static noinline int
 xdp_do_redirect_slow(struct net_device *dev, struct xdp_buff *xdp,
 		     struct bpf_prog *xdp_prog, struct bpf_redirect_info *ri)
 {
+	struct bpf_redirect_info *ri = this_cpu_ptr(&bpf_redirect_info);
 	struct net_device *fwd;
 	u32 index = ri->tgt_index;
 	int err;
@@ -3604,7 +3605,7 @@ static int xdp_do_generic_redirect_map(struct net_device *dev,
 				       struct xdp_buff *xdp,
 				       struct bpf_prog *xdp_prog)
 {
-	struct redirect_info *ri = this_cpu_ptr(&redirect_info);
+	struct bpf_redirect_info *ri = this_cpu_ptr(&bpf_redirect_info);
 	unsigned long map_owner = ri->map_owner;
 	struct bpf_map *map = ri->map;
 	u32 index = ri->ifindex;
@@ -3655,7 +3656,7 @@ err:
 int xdp_do_generic_redirect(struct net_device *dev, struct sk_buff *skb,
 			    struct xdp_buff *xdp, struct bpf_prog *xdp_prog)
 {
-	struct redirect_info *ri = this_cpu_ptr(&redirect_info);
+	struct bpf_redirect_info *ri = this_cpu_ptr(&bpf_redirect_info);
 	u32 index = ri->ifindex;
 	struct net_device *fwd;
 	int err = 0;
