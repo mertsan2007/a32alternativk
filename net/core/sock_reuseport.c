@@ -9,6 +9,7 @@
 #include <net/sock_reuseport.h>
 #include <linux/bpf.h>
 #include <linux/idr.h>
+#include <linux/filter.h>
 #include <linux/rcupdate.h>
 
 #define INIT_SOCKS 128
@@ -132,8 +133,7 @@ static void reuseport_free_rcu(struct rcu_head *head)
 	struct sock_reuseport *reuse;
 
 	reuse = container_of(head, struct sock_reuseport, rcu);
-	if (reuse->prog)
-		bpf_prog_destroy(reuse->prog);
+	sk_reuseport_prog_free(rcu_dereference_protected(reuse->prog, 1));
 	if (reuse->reuseport_id)
 		ida_simple_remove(&reuseport_ida, reuse->reuseport_id);
 	kfree(reuse);
@@ -281,9 +281,15 @@ struct sock *reuseport_select_sock(struct sock *sk,
 		/* paired with smp_wmb() in reuseport_add_sock() */
 		smp_rmb();
 
-		if (prog && skb)
-			sk2 = run_bpf(reuse, socks, prog, skb, hdr_len);
+		if (!prog || !skb)
+			goto select_by_hash;
 
+		if (prog->type == BPF_PROG_TYPE_SK_REUSEPORT)
+			sk2 = bpf_run_sk_reuseport(reuse, sk, prog, skb, hash);
+		else
+			sk2 = run_bpf_filter(reuse, socks, prog, skb, hdr_len);
+
+select_by_hash:
 		/* no bpf or invalid bpf result: fall back to hash usage */
 		if (!sk2)
 			sk2 = reuse->socks[reciprocal_scale(hash, socks)];
