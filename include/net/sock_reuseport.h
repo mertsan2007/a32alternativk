@@ -17,6 +17,7 @@ struct sock_reuseport {
 	u16			num_socks;	/* elements in socks */
 	/* ID stays the same even after the size of socks[] grows. */
 	unsigned int		reuseport_id;
+	bool			bind_inany;
 	struct bpf_prog __rcu	*prog;		/* optional BPF sock selector */
 	struct sock		*socks[0];	/* array of sock pointers */
 };
