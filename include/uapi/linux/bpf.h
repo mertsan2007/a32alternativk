@@ -127,6 +127,7 @@ enum bpf_map_type {
 	BPF_MAP_TYPE_XSKMAP,
 	BPF_MAP_TYPE_SOCKHASH,
 	BPF_MAP_TYPE_CGROUP_STORAGE,
+	BPF_MAP_TYPE_REUSEPORT_SOCKARRAY,
 };
 
 /* Note that tracing related programs such as
