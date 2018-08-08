@@ -9,7 +9,6 @@
 #include <net/sock_reuseport.h>
 #include <linux/bpf.h>
 #include <linux/idr.h>
-#include <linux/filter.h>
 #include <linux/rcupdate.h>
 
 #define INIT_SOCKS 128
@@ -111,7 +110,6 @@ static struct sock_reuseport *reuseport_grow(struct sock_reuseport *reuse)
 	more_reuse->num_socks = reuse->num_socks;
 	more_reuse->prog = reuse->prog;
 	more_reuse->reuseport_id = reuse->reuseport_id;
-	more_reuse->bind_inany = reuse->bind_inany;
 
 	memcpy(more_reuse->socks, reuse->socks,
 	       reuse->num_socks * sizeof(struct sock *));
@@ -133,7 +131,8 @@ static void reuseport_free_rcu(struct rcu_head *head)
 	struct sock_reuseport *reuse;
 
 	reuse = container_of(head, struct sock_reuseport, rcu);
-	sk_reuseport_prog_free(rcu_dereference_protected(reuse->prog, 1));
+	if (reuse->prog)
+		bpf_prog_destroy(reuse->prog);
 	if (reuse->reuseport_id)
 		ida_simple_remove(&reuseport_ida, reuse->reuseport_id);
 	kfree(reuse);
