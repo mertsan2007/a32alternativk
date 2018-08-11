@@ -525,6 +525,7 @@ const struct bpf_map_ops dev_map_ops = {
 	.map_lookup_elem = dev_map_lookup_elem,
 	.map_update_elem = dev_map_update_elem,
 	.map_delete_elem = dev_map_delete_elem,
+	.map_check_btf = map_check_no_btf,
 };
 
 static void dev_map_hash_remove_netdev(struct bpf_dtab *dtab,
