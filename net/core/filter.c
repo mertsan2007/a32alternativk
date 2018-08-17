@@ -3390,31 +3390,33 @@ static void *__xdp_map_lookup_elem(struct bpf_map *map, u32 index)
 	}
 }
 
-static inline bool xdp_map_invalid(const struct bpf_prog *xdp_prog,
-				   unsigned long aux)
+void bpf_clear_redirect_map(struct bpf_map *map)
 {
-	return (unsigned long)xdp_prog->aux != aux;
+	struct bpf_redirect_info *ri;
+	int cpu;
+
+	for_each_possible_cpu(cpu) {
+		ri = per_cpu_ptr(&bpf_redirect_info, cpu);
+		/* Avoid polluting remote cacheline due to writes if
+		 * not needed. Once we pass this test, we need the
+		 * cmpxchg() to make sure it hasn't been changed in
+		 * the meantime by remote CPU.
+		 */
+		if (unlikely(READ_ONCE(ri->map) == map))
+			cmpxchg(&ri->map, map, NULL);
+	}
 }
 
 static int xdp_do_redirect_map(struct net_device *dev, struct xdp_buff *xdp,
-			       struct bpf_prog *xdp_prog)
+			       struct bpf_prog *xdp_prog, struct bpf_map *map)
 {
 	struct bpf_redirect_info *ri = this_cpu_ptr(&bpf_redirect_info);
-	unsigned long map_owner = ri->map_owner;
-	struct bpf_map *map = ri->map;
 	u32 index = ri->ifindex;
 	void *fwd = NULL;
 	int err;
 
 	ri->ifindex = 0;
-	ri->map = NULL;
-	ri->map_owner = 0;
-
-	if (unlikely(xdp_map_invalid(xdp_prog, map_owner))) {
-		err = -EFAULT;
-		map = NULL;
-		goto err;
-	}
+	WRITE_ONCE(ri->map, NULL);
 
 	fwd = __xdp_map_lookup_elem(map, index);
 	if (!fwd) {
@@ -3443,9 +3445,13 @@ xdp_do_redirect_slow(struct net_device *dev, struct xdp_buff *xdp,
 		     struct bpf_prog *xdp_prog, struct bpf_redirect_info *ri)
 {
 	struct bpf_redirect_info *ri = this_cpu_ptr(&bpf_redirect_info);
+	struct bpf_map *map = READ_ONCE(ri->map);
 	struct net_device *fwd;
 	u32 index = ri->tgt_index;
 	int err;
+
+	if (map)
+		return xdp_do_redirect_map(dev, xdp, xdp_prog, map);
 
 	fwd = dev_get_by_index_rcu(dev_net(dev), index);
 	ri->tgt_index = 0;
@@ -3603,24 +3609,17 @@ EXPORT_SYMBOL_GPL(xdp_do_redirect);
 static int xdp_do_generic_redirect_map(struct net_device *dev,
 				       struct sk_buff *skb,
 				       struct xdp_buff *xdp,
-				       struct bpf_prog *xdp_prog)
+				       struct bpf_prog *xdp_prog,
+				       struct bpf_map *map)
 {
 	struct bpf_redirect_info *ri = this_cpu_ptr(&bpf_redirect_info);
-	unsigned long map_owner = ri->map_owner;
-	struct bpf_map *map = ri->map;
 	u32 index = ri->ifindex;
 	void *fwd = NULL;
 	int err = 0;
 
-	ri->tgt_index = 0;
-	ri->tgt_value = NULL;
+	ri->ifindex = 0;
 	WRITE_ONCE(ri->map, NULL);
 
-	if (unlikely(xdp_map_invalid(xdp_prog, map_owner))) {
-		err = -EFAULT;
-		map = NULL;
-		goto err;
-	}
 	fwd = __xdp_map_lookup_elem(map, index);
 	if (unlikely(!fwd)) {
 		err = -EINVAL;
@@ -3657,13 +3656,14 @@ int xdp_do_generic_redirect(struct net_device *dev, struct sk_buff *skb,
 			    struct xdp_buff *xdp, struct bpf_prog *xdp_prog)
 {
 	struct bpf_redirect_info *ri = this_cpu_ptr(&bpf_redirect_info);
+	struct bpf_map *map = READ_ONCE(ri->map);
 	u32 index = ri->ifindex;
 	struct net_device *fwd;
 	int err = 0;
 
-	if (ri->map)
-		return xdp_do_generic_redirect_map(dev, skb, xdp, xdp_prog);
-
+	if (map)
+		return xdp_do_generic_redirect_map(dev, skb, xdp, xdp_prog,
+						   map);
 	ri->ifindex = 0;
 	fwd = dev_get_by_index_rcu(dev_net(dev), index);
 	if (unlikely(!fwd)) {
@@ -3693,8 +3693,6 @@ BPF_CALL_2(bpf_xdp_redirect, u32, ifindex, u64, flags)
 		return XDP_ABORTED;
 
 	ri->flags = flags;
-	ri->tgt_index = ifindex;
-	ri->tgt_value = NULL;
 	WRITE_ONCE(ri->map, NULL);
 
 	return XDP_REDIRECT;
@@ -3729,7 +3727,6 @@ BPF_CALL_3(bpf_xdp_redirect_map, struct bpf_map *, map, u32, ifindex,
 	}
 
 	ri->flags = flags;
-	ri->tgt_index = ifindex;
 	WRITE_ONCE(ri->map, map);
 
 	return XDP_REDIRECT;

@@ -678,7 +678,6 @@ struct bpf_redirect_info {
 	u32 flags;
 	struct bpf_map *map;
 	struct bpf_map *map_to_flush;
-	unsigned long   map_owner;
 	u32 kern_flags;
 };
 
@@ -1015,6 +1014,8 @@ static inline int xdp_ok_fwd_dev(const struct net_device *fwd,
 
 	return 0;
 }
+
+void bpf_clear_redirect_map(struct bpf_map *map);
 
 static inline bool xdp_return_frame_no_direct(void)
 {
