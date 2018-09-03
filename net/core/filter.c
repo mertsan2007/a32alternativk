@@ -3264,7 +3264,7 @@ void xdp_do_flush_map(void)
 }
 EXPORT_SYMBOL_GPL(xdp_do_flush_map);
 
-static void *__xdp_map_lookup_elem(struct bpf_map *map, u32 index)
+static inline void *__xdp_map_lookup_elem(struct bpf_map *map, u32 index)
 {
 	switch (map->map_type) {
 	case BPF_MAP_TYPE_DEVMAP:
@@ -3307,7 +3307,7 @@ static int xdp_do_redirect_map(struct net_device *dev, struct xdp_buff *xdp,
 	WRITE_ONCE(ri->map, NULL);
 
 	fwd = __xdp_map_lookup_elem(map, index);
-	if (!fwd) {
+	if (unlikely(!fwd)) {
 		err = -EINVAL;
 		goto err;
 	}
@@ -3488,7 +3488,7 @@ int xdp_do_redirect(struct net_device *dev, struct xdp_buff *xdp,
 	struct bpf_map *map = READ_ONCE(ri->map);
 
 	if (likely(map))
-		return xdp_do_redirect_map(dev, xdp, xdp_prog, map, ri);
+		return xdp_do_redirect_map(dev, xdp, xdp_prog, map);
 
 	return xdp_do_redirect_slow(dev, xdp, xdp_prog, ri);
 }
