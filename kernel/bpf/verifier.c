@@ -606,7 +606,6 @@ static void __mark_reg_known_zero(struct bpf_reg_state *reg)
 static void __mark_reg_const_zero(struct bpf_reg_state *reg)
 {
 	__mark_reg_known(reg, 0);
-	reg->off = 0;
 	reg->type = SCALAR_VALUE;
 }
 
@@ -2483,9 +2482,6 @@ static int check_mem_access(struct bpf_verifier_env *env, int insn_idx, u32 regn
 			else
 				mark_reg_known_zero(env, regs,
 						    value_regno);
-			regs[value_regno].id = 0;
-			regs[value_regno].off = 0;
-			regs[value_regno].range = 0;
 			regs[value_regno].type = reg_type;
 		}
 
@@ -3280,7 +3276,6 @@ static int check_helper_call(struct bpf_verifier_env *env, int func_id, int insn
 			regs[BPF_REG_0].type = PTR_TO_MAP_VALUE_OR_NULL;
 		/* There is no offset yet applied, variable or fixed */
 		mark_reg_known_zero(env, regs, BPF_REG_0);
-		regs[BPF_REG_0].off = 0;
 		/* remember map_ptr, so that check_map_access()
 		 * can check 'value_size' boundary of memory access
 		 * to map element returned from bpf_map_lookup_elem()
