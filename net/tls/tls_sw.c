@@ -821,7 +821,7 @@ int tls_sw_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
 	int record_room;
 	int num_zc = 0;
 	int orig_size;
-	int ret;
+	int ret = 0;
 
 	if (msg->msg_flags & ~(MSG_MORE | MSG_DONTWAIT | MSG_NOSIGNAL))
 		return -ENOTSUPP;
@@ -1017,8 +1017,8 @@ bool tls_sw_stream_read(const struct sock *sk)
 	int num_async = 0;
 	bool full_record;
 	int record_room;
+	int ret = 0;
 	bool eor;
-	int ret;
 
 	/* Verify that we have a full TLS header, or wait for more data */
 	if (rxm->offset + tls_ctx->rx.prepend_size > skb->len)
