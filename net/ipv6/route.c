@@ -514,10 +514,11 @@ static void rt6_probe_deferred(struct work_struct *w)
 
 static void rt6_probe(struct fib6_info *rt)
 {
-	struct __rt6_probe_work *work;
+	struct __rt6_probe_work *work = NULL;
 	const struct in6_addr *nh_gw;
 	struct neighbour *neigh;
 	struct net_device *dev;
+	struct inet6_dev *idev;
 
 	/*
 	 * Okay, this does not seem to be appropriate
@@ -533,15 +534,12 @@ static void rt6_probe(struct fib6_info *rt)
 	nh_gw = &rt->fib6_nh.nh_gw;
 	dev = rt->fib6_nh.nh_dev;
 	rcu_read_lock_bh();
+	idev = __in6_dev_get(dev);
 	neigh = __ipv6_neigh_lookup_noref(dev, nh_gw);
 	if (neigh) {
-		struct inet6_dev *idev;
-
 		if (neigh->nud_state & NUD_VALID)
 			goto out;
 
-		idev = __in6_dev_get(dev);
-		work = NULL;
 		write_lock(&neigh->lock);
 		if (!(neigh->nud_state & NUD_VALID) &&
 		    time_after(jiffies,
