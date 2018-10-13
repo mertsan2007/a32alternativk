@@ -39,19 +39,17 @@ static int tcp_bpf_wait_data(struct sock *sk, struct sk_psock *psock,
 }
 
 int __tcp_bpf_recvmsg(struct sock *sk, struct sk_psock *psock,
-		      struct msghdr *msg, int len, int flags)
+		      struct msghdr *msg, int len)
 {
 	struct iov_iter *iter = &msg->msg_iter;
-	int peek = flags & MSG_PEEK;
 	int i, ret, copied = 0;
-	struct sk_msg *msg_rx;
-
-	msg_rx = list_first_entry_or_null(&psock->ingress_msg,
-					  struct sk_msg, list);
 
 	while (copied != len) {
 		struct scatterlist *sge;
+		struct sk_msg *msg_rx;
 
+		msg_rx = list_first_entry_or_null(&psock->ingress_msg,
+						  struct sk_msg, list);
 		if (unlikely(!msg_rx))
 			break;
 
@@ -72,29 +70,20 @@ int __tcp_bpf_recvmsg(struct sock *sk, struct sk_psock *psock,
 			}
 
 			copied += copy;
-			if (likely(!peek)) {
-				sge->offset += copy;
-				sge->length -= copy;
-				sk_mem_uncharge(sk, copy);
-				msg_rx->sg.size -= copy;
-
-				if (!sge->length) {
-					sk_msg_iter_var_next(i);
-					if (!msg_rx->skb)
-						put_page(page);
-				}
-			} else {
-				sk_msg_iter_var_next(i);
+			sge->offset += copy;
+			sge->length -= copy;
+			sk_mem_uncharge(sk, copy);
+			if (!sge->length) {
+				i++;
+				if (i == MAX_SKB_FRAGS)
+					i = 0;
+				if (!msg_rx->skb)
+					put_page(page);
 			}
 
 			if (copied == len)
 				break;
 		} while (i != msg_rx->sg.end);
-
-		if (unlikely(peek)) {
-			msg_rx = list_next_entry(msg_rx, list);
-			continue;
-		}
 
 		msg_rx->sg.start = i;
 		if (!sge->length && msg_rx->sg.start == msg_rx->sg.end) {
@@ -103,8 +92,6 @@ int __tcp_bpf_recvmsg(struct sock *sk, struct sk_psock *psock,
 				consume_skb(msg_rx->skb);
 			kfree(msg_rx);
 		}
-		msg_rx = list_first_entry_or_null(&psock->ingress_msg,
-						  struct sk_msg, list);
 	}
 
 	return copied;
@@ -127,7 +114,7 @@ int tcp_bpf_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
 		return tcp_recvmsg(sk, msg, len, nonblock, flags, addr_len);
 	lock_sock(sk);
 msg_bytes_ready:
-	copied = __tcp_bpf_recvmsg(sk, psock, msg, len, flags);
+	copied = __tcp_bpf_recvmsg(sk, psock, msg, len);
 	if (!copied) {
 		int data, err = 0;
 		long timeo;
@@ -286,25 +273,14 @@ EXPORT_SYMBOL_GPL(tcp_bpf_sendmsg_redir);
 static int tcp_bpf_send_verdict(struct sock *sk, struct sk_psock *psock,
 				struct sk_msg *msg, int *copied, int flags)
 {
-	bool cork = false, enospc = sk_msg_full(msg);
+	bool cork = false, enospc = msg->sg.start == msg->sg.end;
 	struct sock *sk_redir;
-	u32 tosend, delta = 0;
+	u32 tosend;
 	int ret;
 
 more_data:
-	if (psock->eval == __SK_NONE) {
-		/* Track delta in msg size to add/subtract it on SK_DROP from
-		 * returned to user copied size. This ensures user doesn't
-		 * get a positive return code with msg_cut_data and SK_DROP
-		 * verdict.
-		 */
-		delta = msg->sg.size;
+	if (psock->eval == __SK_NONE)
 		psock->eval = sk_psock_msg_verdict(sk, psock, msg);
-		if (msg->sg.size < delta)
-			delta -= msg->sg.size;
-		else
-			delta = 0;
-	}
 
 	if (msg->cork_bytes &&
 	    msg->cork_bytes > msg->sg.size && !enospc) {
@@ -360,7 +336,7 @@ more_data:
 	default:
 		sk_msg_free_partial(sk, msg, tosend);
 		sk_msg_apply_bytes(psock, tosend);
-		*copied -= (tosend + delta);
+		*copied -= tosend;
 		return -EACCES;
 	}
 
