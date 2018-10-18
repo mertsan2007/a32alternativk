@@ -718,7 +718,7 @@ static int map_lookup_elem(union bpf_attr *attr)
 		goto err_put;
 	}
 
-	key = memdup_user(ukey, map->key_size);
+	key = __bpf_copy_key(ukey, map->key_size);
 	if (IS_ERR(key)) {
 		err = PTR_ERR(key);
 		goto err_put;
@@ -836,7 +836,7 @@ static int map_update_elem(union bpf_attr *attr)
 		goto err_put;
 	}
 
-	key = memdup_user(ukey, map->key_size);
+	key = __bpf_copy_key(ukey, map->key_size);
 	if (IS_ERR(key)) {
 		err = PTR_ERR(key);
 		goto err_put;
