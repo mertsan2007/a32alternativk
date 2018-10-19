@@ -10,6 +10,8 @@
 #include <linux/etherdevice.h>
 #include <linux/filter.h>
 #include <linux/sched/signal.h>
+#include <net/sock.h>
+#include <net/tcp.h>
 
 static __always_inline u32 bpf_test_run_one(struct bpf_prog *prog, void *ctx,
 		struct bpf_cgroup_storage *storage[MAX_BPF_CGROUP_STORAGE_TYPE])
@@ -296,6 +298,7 @@ int bpf_prog_test_run_skb(struct bpf_prog *prog, const union bpf_attr *kattr,
 	if (!sk) {
 		kfree(data);
 		kfree(ctx);
+		kfree(sk);
 		return -ENOMEM;
 	}
 	sock_net_set(sk, current->nsproxy->net_ns);
@@ -304,7 +307,6 @@ int bpf_prog_test_run_skb(struct bpf_prog *prog, const union bpf_attr *kattr,
 	skb = build_skb(data, 0);
 	if (!skb) {
 		kfree(data);
-		kfree(ctx);
 		kfree(sk);
 		return -ENOMEM;
 	}
@@ -325,8 +327,9 @@ int bpf_prog_test_run_skb(struct bpf_prog *prog, const union bpf_attr *kattr,
 			int nhead = HH_DATA_ALIGN(hh_len - skb_headroom(skb));
 
 			if (pskb_expand_head(skb, nhead, 0, GFP_USER)) {
-				ret = -ENOMEM;
-				goto out;
+				kfree_skb(skb);
+				kfree(sk);
+				return -ENOMEM;
 			}
 		}
 		memset(__skb_push(skb, hh_len), 0, hh_len);
@@ -343,9 +346,7 @@ int bpf_prog_test_run_skb(struct bpf_prog *prog, const union bpf_attr *kattr,
 				     sizeof(struct __sk_buff));
 out:
 	kfree_skb(skb);
-	bpf_sk_storage_free(sk);
 	kfree(sk);
-	kfree(ctx);
 	return ret;
 }
 
