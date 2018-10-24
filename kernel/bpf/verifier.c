@@ -2045,7 +2045,7 @@ static bool may_access_direct_pkt_data(struct bpf_verifier_env *env,
 	case BPF_PROG_TYPE_LWT_OUT:
 	case BPF_PROG_TYPE_LWT_SEG6LOCAL:
 	case BPF_PROG_TYPE_SK_REUSEPORT:
-		/* dst_input() and dst_output() can't write for now */
+	case BPF_PROG_TYPE_FLOW_DISSECTOR:
 		if (t == BPF_WRITE)
 			return false;
 		/* fallthrough */
@@ -2057,7 +2057,6 @@ static bool may_access_direct_pkt_data(struct bpf_verifier_env *env,
 	case BPF_PROG_TYPE_LWT_XMIT:
 	case BPF_PROG_TYPE_SK_SKB:
 	case BPF_PROG_TYPE_SK_MSG:
-	case BPF_PROG_TYPE_FLOW_DISSECTOR:
 		if (meta)
 			return meta->pkt_access;
 
