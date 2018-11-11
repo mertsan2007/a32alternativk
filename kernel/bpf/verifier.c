@@ -7184,8 +7184,6 @@ static int convert_ctx_accesses(struct bpf_verifier_env *env)
 		size_default = bpf_ctx_off_adjust_machine(ctx_field_size);
 		off = insn->off;
 		if (is_narrower_load) {
-			u32 size_default = bpf_ctx_off_adjust_machine(ctx_field_size);
-			u32 off = insn->off;
 			u8 size_code;
 
 			if (type == BPF_WRITE) {
@@ -7213,12 +7211,8 @@ static int convert_ctx_accesses(struct bpf_verifier_env *env)
 		}
 
 		if (is_narrower_load && size < target_size) {
-			u8 shift = bpf_ctx_narrow_access_offset(
-				off, size, size_default) * 8;
-			if (shift && cnt + 1 >= ARRAY_SIZE(insn_buf)) {
-				verbose(env, "bpf verifier narrow ctx load misconfigured\n");
-				return -EINVAL;
-			}
+			u8 shift = (off & (size_default - 1)) * 8;
+
 			if (ctx_field_size <= 4) {
 				if (shift)
 					insn_buf[cnt++] = BPF_ALU32_IMM(BPF_RSH,
@@ -7231,8 +7225,8 @@ static int convert_ctx_accesses(struct bpf_verifier_env *env)
 					insn_buf[cnt++] = BPF_ALU64_IMM(BPF_RSH,
 									insn->dst_reg,
 									shift);
-				insn_buf[cnt++] = BPF_ALU32_IMM(BPF_AND, insn->dst_reg,
-								(1ULL << size * 8) - 1);
+				insn_buf[cnt++] = BPF_ALU64_IMM(BPF_AND, insn->dst_reg,
+								(1 << size * 8) - 1);
 			}
 		}
 
