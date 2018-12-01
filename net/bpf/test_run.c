@@ -28,23 +28,13 @@ static __always_inline u32 bpf_test_run_one(struct bpf_prog *prog, void *ctx,
 	return ret;
 }
 
-static u32 bpf_test_run(struct bpf_prog *prog, void *ctx, u32 repeat, u32 *time)
+static int bpf_test_run(struct bpf_prog *prog, void *ctx, u32 repeat, u32 *ret,
+			u32 *time)
 {
 	struct bpf_cgroup_storage *storage[MAX_BPF_CGROUP_STORAGE_TYPE] = { 0 };
 	enum bpf_cgroup_storage_type stype;
 	u64 time_start, time_spent = 0;
-	int ret = 0;
 	u32 i;
-
-	for_each_cgroup_storage_type(stype) {
-		storage[stype] = bpf_cgroup_storage_alloc(prog, stype);
-		if (IS_ERR(storage[stype])) {
-			storage[stype] = NULL;
-			for_each_cgroup_storage_type(stype)
-				bpf_cgroup_storage_free(storage[stype]);
-			return -ENOMEM;
-		}
-	}
 
 	for_each_cgroup_storage_type(stype) {
 		storage[stype] = bpf_cgroup_storage_alloc(prog, stype);
@@ -63,7 +53,7 @@ static u32 bpf_test_run(struct bpf_prog *prog, void *ctx, u32 repeat, u32 *time)
 	preempt_disable();
 	time_start = ktime_get_ns();
 	for (i = 0; i < repeat; i++) {
-		ret = bpf_test_run_one(prog, ctx, storage);
+		*ret = bpf_test_run_one(prog, ctx, storage);
 		if (need_resched()) {
 			time_spent += ktime_get_ns() - time_start;
 			preempt_enable();
@@ -86,7 +76,7 @@ static u32 bpf_test_run(struct bpf_prog *prog, void *ctx, u32 repeat, u32 *time)
 	for_each_cgroup_storage_type(stype)
 		bpf_cgroup_storage_free(storage[stype]);
 
-	return ret;
+	return 0;
 }
 
 static int bpf_test_finish(const union bpf_attr *kattr,
@@ -321,7 +311,12 @@ int bpf_prog_test_run_skb(struct bpf_prog *prog, const union bpf_attr *kattr,
 		__skb_push(skb, hh_len);
 	if (is_direct_pkt_access)
 		bpf_compute_data_pointers(skb);
-	retval = bpf_test_run(prog, skb, repeat, &duration);
+	ret = bpf_test_run(prog, skb, repeat, &retval, &duration);
+	if (ret) {
+		kfree_skb(skb);
+		kfree(sk);
+		return ret;
+	}
 	if (!is_l2) {
 		if (skb_headroom(skb) < hh_len) {
 			int nhead = HH_DATA_ALIGN(hh_len - skb_headroom(skb));
@@ -376,122 +371,14 @@ int bpf_prog_test_run_xdp(struct bpf_prog *prog, const union bpf_attr *kattr,
 	rxqueue = __netif_get_rx_queue(current->nsproxy->net_ns->loopback_dev, 0);
 	xdp.rxq = &rxqueue->xdp_rxq;
 
-	retval = bpf_test_run(prog, &xdp, repeat, &duration);
+	ret = bpf_test_run(prog, &xdp, repeat, &retval, &duration);
+	if (ret)
+		goto out;
 	if (xdp.data != data + XDP_PACKET_HEADROOM + NET_IP_ALIGN ||
 	    xdp.data_end != xdp.data + size)
 		size = xdp.data_end - xdp.data;
 	ret = bpf_test_finish(kattr, uattr, xdp.data, size, retval, duration);
 out:
-	kfree(data);
-	return ret;
-}
-
-static int verify_user_bpf_flow_keys(struct bpf_flow_keys *ctx)
-{
-	/* make sure the fields we don't use are zeroed */
-	if (!range_is_zero(ctx, 0, offsetof(struct bpf_flow_keys, flags)))
-		return -EINVAL;
-
-	/* flags is allowed */
-
-	if (!range_is_zero(ctx, offsetof(struct bpf_flow_keys, flags) +
-			   FIELD_SIZEOF(struct bpf_flow_keys, flags),
-			   sizeof(struct bpf_flow_keys)))
-		return -EINVAL;
-
-	return 0;
-}
-
-int bpf_prog_test_run_flow_dissector(struct bpf_prog *prog,
-				     const union bpf_attr *kattr,
-				     union bpf_attr __user *uattr)
-{
-	u32 size = kattr->test.data_size_in;
-	struct bpf_flow_dissector ctx = {};
-	u32 repeat = kattr->test.repeat;
-	struct bpf_flow_keys *user_ctx;
-	struct bpf_flow_keys flow_keys;
-	u64 time_start, time_spent = 0;
-	const struct ethhdr *eth;
-	unsigned int flags = 0;
-	u32 retval, duration;
-	void *data;
-	int ret;
-	u32 i;
-
-	if (prog->type != BPF_PROG_TYPE_FLOW_DISSECTOR)
-		return -EINVAL;
-
-	if (size < ETH_HLEN)
-		return -EINVAL;
-
-	data = bpf_test_init(kattr, size, 0, 0);
-	if (IS_ERR(data))
-		return PTR_ERR(data);
-
-	eth = (struct ethhdr *)data;
-
-	if (!repeat)
-		repeat = 1;
-
-	user_ctx = bpf_ctx_init(kattr, sizeof(struct bpf_flow_keys));
-	if (IS_ERR(user_ctx)) {
-		kfree(data);
-		return PTR_ERR(user_ctx);
-	}
-	if (user_ctx) {
-		ret = verify_user_bpf_flow_keys(user_ctx);
-		if (ret)
-			goto out;
-		flags = user_ctx->flags;
-	}
-
-	ctx.flow_keys = &flow_keys;
-	ctx.data = data;
-	ctx.data_end = (__u8 *)data + size;
-
-	rcu_read_lock();
-	preempt_disable();
-	time_start = ktime_get_ns();
-	for (i = 0; i < repeat; i++) {
-		retval = bpf_flow_dissect(prog, &ctx, eth->h_proto, ETH_HLEN,
-					  size, flags);
-
-		if (signal_pending(current)) {
-			preempt_enable();
-			rcu_read_unlock();
-
-			ret = -EINTR;
-			goto out;
-		}
-
-		if (need_resched()) {
-			time_spent += ktime_get_ns() - time_start;
-			preempt_enable();
-			rcu_read_unlock();
-
-			cond_resched();
-
-			rcu_read_lock();
-			preempt_disable();
-			time_start = ktime_get_ns();
-		}
-	}
-	time_spent += ktime_get_ns() - time_start;
-	preempt_enable();
-	rcu_read_unlock();
-
-	do_div(time_spent, repeat);
-	duration = time_spent > U32_MAX ? U32_MAX : (u32)time_spent;
-
-	ret = bpf_test_finish(kattr, uattr, &flow_keys, sizeof(flow_keys),
-			      retval, duration);
-	if (!ret)
-		ret = bpf_ctx_finish(kattr, uattr, user_ctx,
-				     sizeof(struct bpf_flow_keys));
-
-out:
-	kfree(user_ctx);
 	kfree(data);
 	return ret;
 }
