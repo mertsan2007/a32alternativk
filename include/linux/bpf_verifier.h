@@ -36,11 +36,9 @@
  */
 enum bpf_reg_liveness {
 	REG_LIVE_NONE = 0, /* reg hasn't been read or written this branch */
-	REG_LIVE_READ32 = 0x1, /* reg was read, so we're sensitive to initial value */
-	REG_LIVE_READ64 = 0x2, /* likewise, but full 64-bit content matters */
-	REG_LIVE_READ = REG_LIVE_READ32 | REG_LIVE_READ64,
-	REG_LIVE_WRITTEN = 0x4, /* reg was written first, screening off later reads */
-	REG_LIVE_DONE = 0x8, /* liveness won't be updating this register anymore */
+	REG_LIVE_READ, /* reg was read, so we're sensitive to initial value */
+	REG_LIVE_WRITTEN, /* reg was written first, screening off later reads */
+	REG_LIVE_DONE = 4, /* liveness won't be updating this register anymore */
 };
 
 struct bpf_reg_state {
