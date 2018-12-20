@@ -5138,6 +5138,12 @@ static int is_branch_taken(struct bpf_reg_state *reg, u64 val, u8 opcode)
 		if (tnum_is_const(reg->var_off))
 			return !tnum_equals_const(reg->var_off, val);
 		break;
+	case BPF_JSET:
+		if ((~reg->var_off.mask & reg->var_off.value) & val)
+			return 1;
+		if (!((reg->var_off.mask | reg->var_off.value) & val))
+			return 0;
+		break;
 	case BPF_JGT:
 		if (reg->umin_value > val)
 			return 1;
@@ -5235,13 +5241,28 @@ static void reg_set_min_max(struct bpf_reg_state *true_reg,
 			__mark_reg_known(reg, val);
 		}
 		break;
-	}
 	case BPF_JSET:
 		false_reg->var_off = tnum_and(false_reg->var_off,
 					      tnum_const(~val));
 		if (is_power_of_2(val))
 			true_reg->var_off = tnum_or(true_reg->var_off,
 						    tnum_const(val));
+		break;
+	case BPF_JGT:
+		false_reg->umax_value = min(false_reg->umax_value, val);
+		true_reg->umin_value = max(true_reg->umin_value, val + 1);
+		break;
+	case BPF_JSGT:
+		false_reg->smax_value = min_t(s64, false_reg->smax_value, val);
+		true_reg->smin_value = max_t(s64, true_reg->smin_value, val + 1);
+		break;
+	case BPF_JLT:
+		false_reg->umin_value = max(false_reg->umin_value, val);
+		true_reg->umax_value = min(true_reg->umax_value, val - 1);
+		break;
+	case BPF_JSLT:
+		false_reg->smin_value = max_t(s64, false_reg->smin_value, val);
+		true_reg->smax_value = min_t(s64, true_reg->smax_value, val - 1);
 		break;
 	case BPF_JGE:
 	case BPF_JGT:
@@ -5333,13 +5354,28 @@ static void reg_set_min_max_inv(struct bpf_reg_state *true_reg,
 			__mark_reg_known(reg, val);
 		}
 		break;
-	}
 	case BPF_JSET:
 		false_reg->var_off = tnum_and(false_reg->var_off,
 					      tnum_const(~val));
 		if (is_power_of_2(val))
 			true_reg->var_off = tnum_or(true_reg->var_off,
 						    tnum_const(val));
+		break;
+	case BPF_JGT:
+		true_reg->umax_value = min(true_reg->umax_value, val - 1);
+		false_reg->umin_value = max(false_reg->umin_value, val);
+		break;
+	case BPF_JSGT:
+		true_reg->smax_value = min_t(s64, true_reg->smax_value, val - 1);
+		false_reg->smin_value = max_t(s64, false_reg->smin_value, val);
+		break;
+	case BPF_JLT:
+		true_reg->umin_value = max(true_reg->umin_value, val + 1);
+		false_reg->umax_value = min(false_reg->umax_value, val);
+		break;
+	case BPF_JSLT:
+		true_reg->smin_value = max_t(s64, true_reg->smin_value, val + 1);
+		false_reg->smax_value = min_t(s64, false_reg->smax_value, val);
 		break;
 	case BPF_JGE:
 	case BPF_JGT:
