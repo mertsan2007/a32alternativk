@@ -8726,7 +8726,7 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr,
 {
 	struct bpf_verifier_env *env;
 	struct bpf_verifier_log *log;
-	int ret = -EINVAL;
+	int i, len, ret = -EINVAL;
 	bool is_priv;
 
 	/* no program is valid */
@@ -8741,9 +8741,9 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr,
 		return -ENOMEM;
 	log = &env->log;
 
+	len = (*prog)->len;
 	env->insn_aux_data =
-		vzalloc(array_size(sizeof(struct bpf_insn_aux_data),
-				   (*prog)->len));
+		vzalloc(array_size(sizeof(struct bpf_insn_aux_data), len));
 	ret = -ENOMEM;
 	if (!env->insn_aux_data)
 		goto err_free_env;
