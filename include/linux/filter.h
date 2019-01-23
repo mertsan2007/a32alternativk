@@ -995,44 +995,6 @@ static inline int xdp_ok_fwd_dev(const struct net_device *fwd,
 	return 0;
 }
 
-void bpf_clear_redirect_map(struct bpf_map *map);
-
-static inline bool xdp_return_frame_no_direct(void)
-{
-	struct bpf_redirect_info *ri = this_cpu_ptr(&bpf_redirect_info);
-
-	return ri->kern_flags & BPF_RI_F_RF_NO_DIRECT;
-}
-
-static inline void xdp_set_return_frame_no_direct(void)
-{
-	struct bpf_redirect_info *ri = this_cpu_ptr(&bpf_redirect_info);
-
-	ri->kern_flags |= BPF_RI_F_RF_NO_DIRECT;
-}
-
-static inline void xdp_clear_return_frame_no_direct(void)
-{
-	struct bpf_redirect_info *ri = this_cpu_ptr(&bpf_redirect_info);
-
-	ri->kern_flags &= ~BPF_RI_F_RF_NO_DIRECT;
-}
-
-static inline int xdp_ok_fwd_dev(const struct net_device *fwd,
-				 unsigned int pktlen)
-{
-	unsigned int len;
-
-	if (unlikely(!(fwd->flags & IFF_UP)))
-		return -ENETDOWN;
-
-	len = fwd->mtu + fwd->hard_header_len + VLAN_HLEN;
-	if (pktlen > len)
-		return -EMSGSIZE;
-
-	return 0;
-}
-
 /* The pair of xdp_do_redirect and xdp_do_flush_map MUST be called in the
  * same cpu context. Further for best results no more than a single map
  * for the do_redirect/do_flush pair should be used. This limitation is
