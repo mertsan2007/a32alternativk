@@ -2661,7 +2661,7 @@ static int bpf_skb_proto_4_to_6(struct sk_buff *skb)
 	u32 off = skb_mac_header_len(skb);
 	int ret;
 
-	if (skb_is_gso(skb) && !skb_is_gso_tcp(skb))
+	if (!skb_is_gso_tcp(skb))
 		return -ENOTSUPP;
 
 	ret = skb_cow(skb, len_diff);
@@ -2702,7 +2702,7 @@ static int bpf_skb_proto_6_to_4(struct sk_buff *skb)
 	u32 off = skb_mac_header_len(skb);
 	int ret;
 
-	if (skb_is_gso(skb) && !skb_is_gso_tcp(skb))
+	if (!skb_is_gso_tcp(skb))
 		return -ENOTSUPP;
 
 	ret = skb_unclone(skb, GFP_ATOMIC);
@@ -2839,12 +2839,8 @@ static int bpf_skb_net_grow(struct sk_buff *skb, u32 off, u32 len_diff,
 	unsigned int gso_type = SKB_GSO_DODGY;
 	int ret;
 
-	if (skb_is_gso(skb) && !skb_is_gso_tcp(skb)) {
-		/* udp gso_size delineates datagrams, only allow if fixed */
-		if (!(skb_shinfo(skb)->gso_type & SKB_GSO_UDP_L4) ||
-		    !(flags & BPF_F_ADJ_ROOM_FIXED_GSO))
-			return -ENOTSUPP;
-	}
+	if (!skb_is_gso_tcp(skb))
+		return -ENOTSUPP;
 
 	ret = skb_cow_head(skb, len_diff);
 	if (unlikely(ret < 0))
@@ -2940,15 +2936,8 @@ static int bpf_skb_net_shrink(struct sk_buff *skb, u32 off, u32 len_diff,
 {
 	int ret;
 
-	if (flags & ~BPF_F_ADJ_ROOM_FIXED_GSO)
-		return -EINVAL;
-
-	if (skb_is_gso(skb) && !skb_is_gso_tcp(skb)) {
-		/* udp gso_size delineates datagrams, only allow if fixed */
-		if (!(skb_shinfo(skb)->gso_type & SKB_GSO_UDP_L4) ||
-		    !(flags & BPF_F_ADJ_ROOM_FIXED_GSO))
-			return -ENOTSUPP;
-	}
+	if (!skb_is_gso_tcp(skb))
+		return -ENOTSUPP;
 
 	ret = skb_unclone(skb, GFP_ATOMIC);
 	if (unlikely(ret < 0))
