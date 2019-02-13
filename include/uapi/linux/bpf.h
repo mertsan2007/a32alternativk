@@ -2104,6 +2104,19 @@ union bpf_attr {
  *			Only works if *skb* contains an IPv6 packet. Insert a
  *			Segment Routing Header (**struct ipv6_sr_hdr**) inside
  *			the IPv6 header.
+ *		**BPF_LWT_ENCAP_IP**
+ *			IP encapsulation (GRE/GUE/IPIP/etc). The outer header
+ *			must be IPv4 or IPv6, followed by zero or more
+ *			additional headers, up to LWT_BPF_MAX_HEADROOM total
+ *			bytes in all prepended headers. Please note that
+ *			if skb_is_gso(skb) is true, no more than two headers
+ *			can be prepended, and the inner header, if present,
+ *			should be either GRE or UDP/GUE.
+ *
+ *		BPF_LWT_ENCAP_SEG6*** types can be called by bpf programs of
+ *		type BPF_PROG_TYPE_LWT_IN; BPF_LWT_ENCAP_IP type can be called
+ *		by bpf programs of types BPF_PROG_TYPE_LWT_IN and
+ *		BPF_PROG_TYPE_LWT_XMIT.
  *
  * 		A call to this helper is susceptible to change the underlaying
  * 		packet buffer. Therefore, at load time, all checks on pointers
@@ -2815,7 +2828,8 @@ enum bpf_hdr_start_off {
 /* Encapsulation type for BPF_FUNC_lwt_push_encap helper. */
 enum bpf_lwt_encap_mode {
 	BPF_LWT_ENCAP_SEG6,
-	BPF_LWT_ENCAP_SEG6_INLINE
+	BPF_LWT_ENCAP_SEG6_INLINE,
+	BPF_LWT_ENCAP_IP,
 };
 
 #define __bpf_md_ptr(type, name)	\
