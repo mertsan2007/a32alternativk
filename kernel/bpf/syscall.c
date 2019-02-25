@@ -2264,6 +2264,10 @@ static int bpf_prog_get_info_by_fd(struct file *file,
 	if (err)
 		return err;
 
+	bpf_prog_get_stats(prog, &stats);
+	info.run_time_ns = stats.nsecs;
+	info.run_cnt = stats.cnt;
+
 	if (!capable(CAP_SYS_ADMIN)) {
 		info.jited_prog_len = 0;
 		info.xlated_prog_len = 0;
