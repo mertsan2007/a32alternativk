@@ -224,6 +224,9 @@ static int proc_dointvec_minmax_coredump(struct ctl_table *table, int write,
 static int proc_dostring_coredump(struct ctl_table *table, int write,
 		void __user *buffer, size_t *lenp, loff_t *ppos);
 #endif
+static int proc_dointvec_minmax_bpf_stats(struct ctl_table *table, int write,
+					  void __user *buffer, size_t *lenp,
+					  loff_t *ppos);
 
 #ifdef CONFIG_MAGIC_SYSRQ
 /* Note: sysrq code uses it's own private copy */
@@ -1331,10 +1334,12 @@ static struct ctl_table kern_table[] = {
 #endif
 	{
 		.procname	= "bpf_stats_enabled",
-		.data		= &bpf_stats_enabled_key.key,
-		.maxlen		= sizeof(bpf_stats_enabled_key),
+		.data		= &sysctl_bpf_stats_enabled,
+		.maxlen		= sizeof(sysctl_bpf_stats_enabled),
 		.mode		= 0644,
-		.proc_handler	= proc_do_static_key,
+		.proc_handler	= proc_dointvec_minmax_bpf_stats,
+		.extra1		= &zero,
+		.extra2		= &one,
 	},
 #if defined(CONFIG_TREE_RCU) || defined(CONFIG_PREEMPT_RCU)
 	{
@@ -3359,38 +3364,27 @@ int proc_doulongvec_ms_jiffies_minmax(struct ctl_table *table, int write,
 
 #endif /* CONFIG_PROC_SYSCTL */
 
-#if defined(CONFIG_SYSCTL)
-int proc_do_static_key(struct ctl_table *table, int write,
-		       void __user *buffer, size_t *lenp,
-		       loff_t *ppos)
+static int proc_dointvec_minmax_bpf_stats(struct ctl_table *table, int write,
+					  void __user *buffer, size_t *lenp,
+					  loff_t *ppos)
 {
-	struct static_key *key = (struct static_key *)table->data;
-	static DEFINE_MUTEX(static_key_mutex);
-	int val, ret;
-	struct ctl_table tmp = {
-		.data   = &val,
-		.maxlen = sizeof(val),
-		.mode   = table->mode,
-		.extra1 = &zero,
-		.extra2 = &one,
-	};
+	int ret, bpf_stats = *(int *)table->data;
+	struct ctl_table tmp = *table;
 
 	if (write && !capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	mutex_lock(&static_key_mutex);
-	val = static_key_enabled(key);
+	tmp.data = &bpf_stats;
 	ret = proc_dointvec_minmax(&tmp, write, buffer, lenp, ppos);
 	if (write && !ret) {
-		if (val)
-			static_key_enable(key);
+		*(int *)table->data = bpf_stats;
+		if (bpf_stats)
+			static_branch_enable(&bpf_stats_enabled_key);
 		else
-			static_key_disable(key);
+			static_branch_disable(&bpf_stats_enabled_key);
 	}
-	mutex_unlock(&static_key_mutex);
 	return ret;
 }
-#endif
 
 /*
  * No sense putting this after each symbol definition, twice,
