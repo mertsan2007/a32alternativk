@@ -1531,7 +1531,10 @@ union bpf_attr {
  * 		Grow or shrink the room for data in the packet associated to
  * 		*skb* by *len_diff*, and according to the selected *mode*.
  *
- * 		There is a single supported mode at this time:
+ *		There are two supported modes at this time:
+ *
+ *		* **BPF_ADJ_ROOM_MAC**: Adjust room at the mac layer
+ *		  (room space is added or removed below the layer 2 header).
  *
  * 		* **BPF_ADJ_ROOM_NET**: Adjust room at the network layer
  * 		  (room space is added or removed below the layer 3 header).

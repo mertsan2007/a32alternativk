@@ -2713,23 +2713,8 @@ static u32 bpf_skb_net_base_len(const struct sk_buff *skb)
 	}
 }
 
-#define BPF_F_ADJ_ROOM_ENCAP_L3_MASK	(BPF_F_ADJ_ROOM_ENCAP_L3_IPV4 | \
-					 BPF_F_ADJ_ROOM_ENCAP_L3_IPV6)
-
-#define BPF_F_ADJ_ROOM_MASK		(BPF_F_ADJ_ROOM_FIXED_GSO | \
-					 BPF_F_ADJ_ROOM_ENCAP_L3_MASK | \
-					 BPF_F_ADJ_ROOM_ENCAP_L4_GRE | \
-					 BPF_F_ADJ_ROOM_ENCAP_L4_UDP | \
-					 BPF_F_ADJ_ROOM_ENCAP_L2( \
-					  BPF_ADJ_ROOM_ENCAP_L2_MASK))
-
-static int bpf_skb_net_grow(struct sk_buff *skb, u32 off, u32 len_diff,
-			    u64 flags)
+static int bpf_skb_net_grow(struct sk_buff *skb, u32 off, u32 len_diff)
 {
-	u8 inner_mac_len = flags >> BPF_ADJ_ROOM_ENCAP_L2_SHIFT;
-	bool encap = flags & BPF_F_ADJ_ROOM_ENCAP_L3_MASK;
-	u16 mac_len = 0, inner_net = 0, inner_trans = 0;
-	unsigned int gso_type = SKB_GSO_DODGY;
 	int ret;
 
 	if (skb_is_gso(skb) && !skb_is_gso_tcp(skb))
@@ -2824,8 +2809,7 @@ static int bpf_skb_net_grow(struct sk_buff *skb, u32 off, u32 len_diff,
 	return 0;
 }
 
-static int bpf_skb_net_shrink(struct sk_buff *skb, u32 off, u32 len_diff,
-			      u64 flags)
+static int bpf_skb_net_shrink(struct sk_buff *skb, u32 off, u32 len_diff)
 {
 	int ret;
 
@@ -2868,7 +2852,7 @@ BPF_CALL_4(bpf_skb_adjust_room, struct sk_buff *, skb, s32, len_diff,
 	u32 off;
 	int ret;
 
-	if (unlikely(flags & ~BPF_F_ADJ_ROOM_MASK))
+	if (unlikely(flags))
 		return -EINVAL;
 	if (unlikely(len_diff_abs > 0xfffU))
 		return -EFAULT;
@@ -2894,8 +2878,8 @@ BPF_CALL_4(bpf_skb_adjust_room, struct sk_buff *, skb, s32, len_diff,
 			 !skb_is_gso(skb))))
 		return -ENOTSUPP;
 
-	ret = shrink ? bpf_skb_net_shrink(skb, off, len_diff_abs, flags) :
-		       bpf_skb_net_grow(skb, off, len_diff_abs, flags);
+	ret = shrink ? bpf_skb_net_shrink(skb, off, len_diff_abs) :
+		       bpf_skb_net_grow(skb, off, len_diff_abs);
 
 	bpf_compute_data_pointers(skb);
 	return ret;
