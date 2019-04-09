@@ -288,7 +288,6 @@ int bpf_prog_test_run_skb(struct bpf_prog *prog, const union bpf_attr *kattr,
 	if (!sk) {
 		kfree(data);
 		kfree(ctx);
-		kfree(sk);
 		return -ENOMEM;
 	}
 	sock_net_set(sk, current->nsproxy->net_ns);
@@ -297,6 +296,7 @@ int bpf_prog_test_run_skb(struct bpf_prog *prog, const union bpf_attr *kattr,
 	skb = build_skb(data, 0);
 	if (!skb) {
 		kfree(data);
+		kfree(ctx);
 		kfree(sk);
 		return -ENOMEM;
 	}
@@ -311,20 +311,19 @@ int bpf_prog_test_run_skb(struct bpf_prog *prog, const union bpf_attr *kattr,
 		__skb_push(skb, hh_len);
 	if (is_direct_pkt_access)
 		bpf_compute_data_pointers(skb);
+	ret = convert___skb_to_skb(skb, ctx);
+	if (ret)
+		goto out;
 	ret = bpf_test_run(prog, skb, repeat, &retval, &duration);
-	if (ret) {
-		kfree_skb(skb);
-		kfree(sk);
-		return ret;
-	}
+	if (ret)
+		goto out;
 	if (!is_l2) {
 		if (skb_headroom(skb) < hh_len) {
 			int nhead = HH_DATA_ALIGN(hh_len - skb_headroom(skb));
 
 			if (pskb_expand_head(skb, nhead, 0, GFP_USER)) {
-				kfree_skb(skb);
-				kfree(sk);
-				return -ENOMEM;
+				ret = -ENOMEM;
+				goto out;
 			}
 		}
 		memset(__skb_push(skb, hh_len), 0, hh_len);
@@ -342,6 +341,7 @@ int bpf_prog_test_run_skb(struct bpf_prog *prog, const union bpf_attr *kattr,
 out:
 	kfree_skb(skb);
 	kfree(sk);
+	kfree(ctx);
 	return ret;
 }
 
