@@ -386,14 +386,16 @@ static void bpf_map_show_fdinfo(struct seq_file *m, struct file *filp)
 		   "max_entries:\t%u\n"
 		   "map_flags:\t%#x\n"
 		   "memlock:\t%llu\n"
-		   "map_id:\t%u\n",
+		   "map_id:\t%u\n"
+		   "frozen:\t%u\n",
 		   map->map_type,
 		   map->key_size,
 		   map->value_size,
 		   map->max_entries,
 		   map->map_flags,
 		   map->pages * 1ULL << PAGE_SHIFT,
-		   map->id);
+		   map->id,
+		   READ_ONCE(map->frozen));
 
 	if (owner_prog_type) {
 		seq_printf(m, "owner_prog_type:\t%u\n",
@@ -1111,8 +1113,7 @@ static int map_lookup_and_delete_elem(union bpf_attr *attr)
 	map = __bpf_map_get(f);
 	if (IS_ERR(map))
 		return PTR_ERR(map);
-
-	if (!(f.file->f_mode & FMODE_CAN_WRITE)) {
+	if (!(map_get_sys_perms(map, f) & FMODE_CAN_WRITE)) {
 		err = -EPERM;
 		goto err_put;
 	}
@@ -1149,6 +1150,36 @@ free_value:
 	kfree(value);
 free_key:
 	kfree(key);
+err_put:
+	fdput(f);
+	return err;
+}
+
+#define BPF_MAP_FREEZE_LAST_FIELD map_fd
+
+static int map_freeze(const union bpf_attr *attr)
+{
+	int err = 0, ufd = attr->map_fd;
+	struct bpf_map *map;
+	struct fd f;
+
+	if (CHECK_ATTR(BPF_MAP_FREEZE))
+		return -EINVAL;
+
+	f = fdget(ufd);
+	map = __bpf_map_get(f);
+	if (IS_ERR(map))
+		return PTR_ERR(map);
+	if (READ_ONCE(map->frozen)) {
+		err = -EBUSY;
+		goto err_put;
+	}
+	if (!capable(CAP_SYS_ADMIN)) {
+		err = -EPERM;
+		goto err_put;
+	}
+
+	WRITE_ONCE(map->frozen, true);
 err_put:
 	fdput(f);
 	return err;
