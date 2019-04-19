@@ -6407,21 +6407,6 @@ static u32 state_htab_size(struct bpf_verifier_env *env)
 	return env->prog->len;
 }
 
-static struct bpf_verifier_state_list **explored_state(
-					struct bpf_verifier_env *env,
-					int idx)
-{
-	struct bpf_verifier_state *cur = env->cur_state;
-	struct bpf_func_state *state = cur->frame[cur->curframe];
-
-	return &env->explored_states[(idx ^ state->callsite) % state_htab_size(env)];
-}
-
-static void init_explored_state(struct bpf_verifier_env *env, int idx)
-{
-	env->insn_aux_data[idx].prune_point = true;
-}
-
 /* t, w, e - match pseudo-code above:
  * t - index of current instruction
  * w - next instruction
@@ -6483,11 +6468,11 @@ static int check_cfg(struct bpf_verifier_env *env)
 	int ret = 0;
 	int i, t;
 
-	insn_state = kvcalloc(insn_cnt, sizeof(int), GFP_KERNEL);
+	insn_state = env->cfg.insn_state = kvcalloc(insn_cnt, sizeof(int), GFP_KERNEL);
 	if (!insn_state)
 		return -ENOMEM;
 
-	insn_stack = kvcalloc(insn_cnt, sizeof(int), GFP_KERNEL);
+	insn_stack = env->cfg.insn_stack = kvcalloc(insn_cnt, sizeof(int), GFP_KERNEL);
 	if (!insn_stack) {
 		kvfree(insn_state);
 		return -ENOMEM;
@@ -6574,7 +6559,7 @@ peek_stack:
 
 mark_explored:
 	insn_state[t] = EXPLORED;
-	if (cur_stack-- <= 0) {
+	if (env->cfg.cur_stack-- <= 0) {
 		verbose(env, "pop stack internal bug\n");
 		ret = -EFAULT;
 		goto err_free;
@@ -6594,6 +6579,7 @@ check_state:
 err_free:
 	kvfree(insn_state);
 	kvfree(insn_stack);
+	env->cfg.insn_state = env->cfg.insn_stack = NULL;
 	return ret;
 }
 
