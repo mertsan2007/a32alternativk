@@ -5135,15 +5135,35 @@ static int check_alu_op(struct bpf_verifier_env *env, struct bpf_insn *insn)
 	return 0;
 }
 
+static void __find_good_pkt_pointers(struct bpf_func_state *state,
+				     struct bpf_reg_state *dst_reg,
+				     enum bpf_reg_type type, u16 new_range)
+{
+	struct bpf_reg_state *reg;
+	int i;
+
+	for (i = 0; i < MAX_BPF_REG; i++) {
+		reg = &state->regs[i];
+		if (reg->type == type && reg->id == dst_reg->id)
+			/* keep the maximum range already checked */
+			reg->range = max(reg->range, new_range);
+	}
+
+	bpf_for_each_spilled_reg(i, state, reg) {
+		if (!reg)
+			continue;
+		if (reg->type == type && reg->id == dst_reg->id)
+			reg->range = max(reg->range, new_range);
+	}
+}
+
 static void find_good_pkt_pointers(struct bpf_verifier_state *vstate,
 				   struct bpf_reg_state *dst_reg,
 				   enum bpf_reg_type type,
 				   bool range_right_open)
 {
-	struct bpf_func_state *state = vstate->frame[vstate->curframe];
-	struct bpf_reg_state *regs = state->regs, *reg;
 	u16 new_range;
-	int i, j;
+	int i;
 
 	if (dst_reg->off < 0 ||
 	    (dst_reg->off == 0 && range_right_open))
@@ -5208,174 +5228,9 @@ static void find_good_pkt_pointers(struct bpf_verifier_state *vstate,
 	 * the range won't allow anything.
 	 * dst_reg->off is known < MAX_PACKET_OFF, therefore it fits in a u16.
 	 */
-	for (i = 0; i < MAX_BPF_REG; i++)
-		if (regs[i].type == type && regs[i].id == dst_reg->id)
-			/* keep the maximum range already checked */
-			regs[i].range = max(regs[i].range, new_range);
-
-	for (j = 0; j <= vstate->curframe; j++) {
-		state = vstate->frame[j];
-		bpf_for_each_spilled_reg(i, state, reg) {
-			if (!reg)
-				continue;
-			if (reg->type == type && reg->id == dst_reg->id)
-				reg->range = max(reg->range, new_range);
-		}
-	}
-
-	switch (opcode) {
-	case BPF_JEQ:
-		if (tnum_is_const(reg->var_off))
-			return !!tnum_equals_const(reg->var_off, val);
-		break;
-	case BPF_JNE:
-		if (tnum_is_const(reg->var_off))
-			return !tnum_equals_const(reg->var_off, val);
-		break;
-	case BPF_JSET:
-		if ((~reg->var_off.mask & reg->var_off.value) & val)
-			return 1;
-		if (!((reg->var_off.mask | reg->var_off.value) & val))
-			return 0;
-		break;
-	case BPF_JGT:
-		if (reg->umin_value > val)
-			return 1;
-		else if (reg->umax_value <= val)
-			return 0;
-		break;
-	case BPF_JSGT:
-		if (reg->smin_value > sval)
-			return 1;
-		else if (reg->smax_value < sval)
-			return 0;
-		break;
-	case BPF_JLT:
-		if (reg->umax_value < val)
-			return 1;
-		else if (reg->umin_value >= val)
-			return 0;
-		break;
-	case BPF_JSLT:
-		if (reg->smax_value < sval)
-			return 1;
-		else if (reg->smin_value >= sval)
-			return 0;
-		break;
-	case BPF_JGE:
-		if (reg->umin_value >= val)
-			return 1;
-		else if (reg->umax_value < val)
-			return 0;
-		break;
-	case BPF_JSGE:
-		if (reg->smin_value >= sval)
-			return 1;
-		else if (reg->smax_value < sval)
-			return 0;
-		break;
-	case BPF_JLE:
-		if (reg->umax_value <= val)
-			return 1;
-		else if (reg->umin_value > val)
-			return 0;
-		break;
-	case BPF_JSLE:
-		if (reg->smax_value <= sval)
-			return 1;
-		else if (reg->smin_value > sval)
-			return 0;
-		break;
-	}
-
-	return -1;
-}
-
-/* Generate min value of the high 32-bit from TNUM info. */
-static u64 gen_hi_min(struct tnum var)
-{
-	return var.value & ~0xffffffffULL;
-}
-
-/* Generate max value of the high 32-bit from TNUM info. */
-static u64 gen_hi_max(struct tnum var)
-{
-	return (var.value | var.mask) & ~0xffffffffULL;
-}
-
-/* Return true if VAL is compared with a s64 sign extended from s32, and they
- * are with the same signedness.
- */
-static bool cmp_val_with_extended_s64(s64 sval, struct bpf_reg_state *reg)
-{
-	return ((s32)sval >= 0 &&
-		reg->smin_value >= 0 && reg->smax_value <= S32_MAX) ||
-	       ((s32)sval < 0 &&
-		reg->smax_value <= 0 && reg->smin_value >= S32_MIN);
-}
-
-/* Constrain the possible values of @reg with unsigned upper bound @bound.
- * If @is_exclusive, @bound is an exclusive limit, otherwise it is inclusive.
- * If @is_jmp32, @bound is a 32-bit value that only constrains the low 32 bits
- * of @reg.
- */
-static void set_upper_bound(struct bpf_reg_state *reg, u64 bound, bool is_jmp32,
-			    bool is_exclusive)
-{
-	if (is_exclusive) {
-		/* There are no values for `reg` that make `reg<0` true. */
-		if (bound == 0)
-			return;
-		bound--;
-	}
-	if (is_jmp32) {
-		/* Constrain the register's value in the tnum representation.
-		 * For 64-bit comparisons this happens later in
-		 * __reg_bound_offset(), but for 32-bit comparisons, we can be
-		 * more precise than what can be derived from the updated
-		 * numeric bounds.
-		 */
-		struct tnum t = tnum_range(0, bound);
-
-		t.mask |= ~0xffffffffULL; /* upper half is unknown */
-		reg->var_off = tnum_intersect(reg->var_off, t);
-
-		/* Compute the 64-bit bound from the 32-bit bound. */
-		bound += gen_hi_max(reg->var_off);
-	}
-	reg->umax_value = min(reg->umax_value, bound);
-}
-
-/* Constrain the possible values of @reg with unsigned lower bound @bound.
- * If @is_exclusive, @bound is an exclusive limit, otherwise it is inclusive.
- * If @is_jmp32, @bound is a 32-bit value that only constrains the low 32 bits
- * of @reg.
- */
-static void set_lower_bound(struct bpf_reg_state *reg, u64 bound, bool is_jmp32,
-			    bool is_exclusive)
-{
-	if (is_exclusive) {
-		/* There are no values for `reg` that make `reg>MAX` true. */
-		if (bound == (is_jmp32 ? U32_MAX : U64_MAX))
-			return;
-		bound++;
-	}
-	if (is_jmp32) {
-		/* Constrain the register's value in the tnum representation.
-		 * For 64-bit comparisons this happens later in
-		 * __reg_bound_offset(), but for 32-bit comparisons, we can be
-		 * more precise than what can be derived from the updated
-		 * numeric bounds.
-		 */
-		struct tnum t = tnum_range(bound, U32_MAX);
-
-		t.mask |= ~0xffffffffULL; /* upper half is unknown */
-		reg->var_off = tnum_intersect(reg->var_off, t);
-
-		/* Compute the 64-bit bound from the 32-bit bound. */
-		bound += gen_hi_min(reg->var_off);
-	}
-	reg->umin_value = max(reg->umin_value, bound);
+	for (i = 0; i <= vstate->curframe; i++)
+		__find_good_pkt_pointers(vstate->frame[i], dst_reg, type,
+					 new_range);
 }
 
 /* compute branch direction of the expression "if (reg opcode val) goto target;"
@@ -5872,10 +5727,10 @@ static void mark_ptr_or_null_regs(struct bpf_verifier_state *vstate, u32 regno,
 				  bool is_null)
 {
 	struct bpf_func_state *state = vstate->frame[vstate->curframe];
-	struct bpf_reg_state *reg, *regs = state->regs;
+	struct bpf_reg_state *regs = state->regs;
 	u32 ref_obj_id = regs[regno].ref_obj_id;
 	u32 id = regs[regno].id;
-	int i, j;
+	int i;
 
 	if (ref_obj_id && ref_obj_id == id && is_null)
 		/* regs[regno] is in the " == NULL" branch.
@@ -5884,17 +5739,8 @@ static void mark_ptr_or_null_regs(struct bpf_verifier_state *vstate, u32 regno,
 		 */
 		WARN_ON_ONCE(release_reference_state(state, id));
 
-	for (i = 0; i < MAX_BPF_REG; i++)
-		mark_ptr_or_null_reg(state, &regs[i], id, is_null);
-
-	for (j = 0; j <= vstate->curframe; j++) {
-		state = vstate->frame[j];
-		bpf_for_each_spilled_reg(i, state, reg) {
-			if (!reg)
-				continue;
-			mark_ptr_or_null_reg(state, reg, id, is_null);
-		}
-	}
+	for (i = 0; i <= vstate->curframe; i++)
+		__mark_ptr_or_null_regs(vstate->frame[i], id, is_null);
 }
 
 static bool try_match_pkt_pointers(const struct bpf_insn *insn,
