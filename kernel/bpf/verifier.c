@@ -6301,11 +6301,19 @@ enum {
 	BRANCH = 2,
 };
 
+static u32 state_htab_size(struct bpf_verifier_env *env)
+{
+	return env->prog->len;
+}
+
 static struct bpf_verifier_state_list **explored_state(
 					struct bpf_verifier_env *env,
 					int idx)
 {
-	return &env->explored_states[idx];
+	struct bpf_verifier_state *cur = env->cur_state;
+	struct bpf_func_state *state = cur->frame[cur->curframe];
+
+	return &env->explored_states[(idx ^ state->callsite) % state_htab_size(env)];
 }
 
 static void init_explored_state(struct bpf_verifier_env *env, int idx)
@@ -6882,7 +6890,8 @@ static void clean_live_states(struct bpf_verifier_env *env, int insn,
 
 	sl = *explored_state(env, insn);
 	while (sl) {
-		if (sl->state.curframe != cur->curframe)
+		if (sl->state.insn_idx != insn ||
+		    sl->state.curframe != cur->curframe)
 			goto next;
 		for (i = 0; i <= cur->curframe; i++)
 			if (sl->state.frame[i]->callsite != cur->frame[i]->callsite)
@@ -7301,6 +7310,9 @@ static int is_state_visited(struct bpf_verifier_env *env, int insn_idx)
 	clean_live_states(env, insn_idx, cur);
 
 	while (sl) {
+		states_cnt++;
+		if (sl->state.insn_idx != insn_idx)
+			goto next;
 		if (states_equal(env, &sl->state, cur)) {
 			sl->hit_cnt++;
 			/* reached equivalent register/stack state,
@@ -7318,7 +7330,6 @@ static int is_state_visited(struct bpf_verifier_env *env, int insn_idx)
 				return err;
 			return 1;
 		}
-		states_cnt++;
 		sl->miss_cnt++;
 		/* heuristic to determine whether this state is beneficial
 		 * to keep checking from state equivalence point of view.
@@ -7345,6 +7356,7 @@ static int is_state_visited(struct bpf_verifier_env *env, int insn_idx)
 			sl = *pprev;
 			continue;
 		}
+next:
 		pprev = &sl->next;
 		sl = *pprev;
 	}
@@ -7376,6 +7388,7 @@ static int is_state_visited(struct bpf_verifier_env *env, int insn_idx)
 		kfree(new_sl);
 		return err;
 	}
+	new->insn_idx = insn_idx;
 	new_sl->next = *explored_state(env, insn_idx);
 	*explored_state(env, insn_idx) = new_sl;
 	/* connect new state to parentage chain. Current frame needs all
@@ -9190,7 +9203,7 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr,
 			goto skip_full_check;
 	}
 
-	env->explored_states = kvcalloc(env->prog->len,
+	env->explored_states = kvcalloc(state_htab_size(env),
 				       sizeof(struct bpf_verifier_state_list *),
 				       GFP_USER);
 	ret = -ENOMEM;
