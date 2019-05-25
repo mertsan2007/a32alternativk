@@ -23,6 +23,19 @@ EXPORT_SYMBOL(cgroup_bpf_enabled_key);
 
 void cgroup_bpf_offline(struct cgroup *cgrp)
 {
+	cgroup_get(cgrp);
+	percpu_ref_kill(&cgrp->bpf.refcnt);
+}
+
+/**
+ * cgroup_bpf_release() - put references of all bpf programs and
+ *                        release all cgroup bpf data
+ * @work: work structure embedded into the cgroup to modify
+ */
+static void cgroup_bpf_release(struct work_struct *work)
+{
+	struct cgroup *cgrp = container_of(work, struct cgroup,
+					   bpf.release_work);
 	enum bpf_cgroup_storage_type stype;
 	unsigned int type;
 
@@ -47,11 +60,6 @@ void cgroup_bpf_offline(struct cgroup *cgrp)
 				lockdep_is_held(&cgroup_mutex));
 		bpf_prog_array_free(old_array);
 	}
-
-	mutex_unlock(&cgroup_mutex);
-
-	for (p = cgroup_parent(cgrp); p; p = cgroup_parent(p))
-		cgroup_bpf_put(p);
 
 	percpu_ref_exit(&cgrp->bpf.refcnt);
 	cgroup_put(cgrp);
@@ -186,17 +194,13 @@ int cgroup_bpf_inherit(struct cgroup *cgrp)
  * that array below is variable length
  */
 #define	NR ARRAY_SIZE(cgrp->bpf.effective)
-	struct bpf_prog_array *arrays[NR] = {};
-	struct cgroup *p;
+	struct bpf_prog_array __rcu *arrays[NR] = {};
 	int ret, i;
 
 	ret = percpu_ref_init(&cgrp->bpf.refcnt, cgroup_bpf_release_fn, 0,
 			      GFP_KERNEL);
 	if (ret)
 		return ret;
-
-	for (p = cgroup_parent(cgrp); p; p = cgroup_parent(p))
-		cgroup_bpf_get(p);
 
 	for (i = 0; i < NR; i++)
 		INIT_LIST_HEAD(&cgrp->bpf.progs[i]);
@@ -212,9 +216,6 @@ int cgroup_bpf_inherit(struct cgroup *cgrp)
 cleanup:
 	for (i = 0; i < NR; i++)
 		bpf_prog_array_free(arrays[i]);
-
-	for (p = cgroup_parent(cgrp); p; p = cgroup_parent(p))
-		cgroup_bpf_put(p);
 
 	percpu_ref_exit(&cgrp->bpf.refcnt);
 
