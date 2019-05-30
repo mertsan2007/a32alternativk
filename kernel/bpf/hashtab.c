@@ -359,8 +359,14 @@ static struct bpf_map *htab_map_alloc(union bpf_attr *attr)
 	else
 	       cost += (u64) htab->elem_size * num_possible_cpus();
 
-	/* if map size is larger than memlock limit, reject it */
-	err = bpf_map_charge_init(&htab->map.memory, cost);
+	if (cost >= U32_MAX - PAGE_SIZE)
+		/* make sure page count doesn't overflow */
+		goto free_htab;
+
+	htab->map.memory.pages = round_up(cost, PAGE_SIZE) >> PAGE_SHIFT;
+
+	/* if map size is larger than memlock limit, reject it early */
+	err = bpf_map_precharge_memlock(htab->map.memory.pages);
 	if (err)
 		goto free_htab;
 
