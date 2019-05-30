@@ -591,8 +591,7 @@ static struct bpf_map *trie_alloc(union bpf_attr *attr)
 			attr->value_size + trie->data_size;
 	cost += (u64) attr->max_entries * cost_per_node;
 
-	ret = bpf_map_charge_init(&trie->map.memory,
-				  round_up(cost, PAGE_SIZE) >> PAGE_SHIFT);
+	ret = bpf_map_charge_init(&trie->map.memory, cost);
 	if (ret)
 		goto out_err;
 
