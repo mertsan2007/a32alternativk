@@ -120,8 +120,14 @@ static struct bpf_map *stack_map_alloc(union bpf_attr *attr)
 	n_buckets = roundup_pow_of_two(attr->max_entries);
 
 	cost = n_buckets * sizeof(struct stack_map_bucket *) + sizeof(*smap);
-	err = bpf_map_charge_init(&mem, cost + attr->max_entries *
-			   (sizeof(struct stack_map_bucket) + (u64)value_size));
+	if (cost >= U32_MAX - PAGE_SIZE)
+		return ERR_PTR(-E2BIG);
+	cost += n_buckets * (value_size + sizeof(struct stack_map_bucket));
+	if (cost >= U32_MAX - PAGE_SIZE)
+		return ERR_PTR(-E2BIG);
+
+	err = bpf_map_charge_init(&mem,
+				  round_up(cost, PAGE_SIZE) >> PAGE_SHIFT);
 	if (err)
 		return ERR_PTR(err);
 
@@ -134,11 +140,6 @@ static struct bpf_map *stack_map_alloc(union bpf_attr *attr)
 	bpf_map_init_from_attr(&smap->map, attr);
 	smap->map.value_size = value_size;
 	smap->n_buckets = n_buckets;
-	smap->map.memory.pages = round_up(cost, PAGE_SIZE) >> PAGE_SHIFT;
-
-	err = bpf_map_precharge_memlock(smap->map.memory.pages);
-	if (err)
-		goto free_smap;
 
 	err = get_callchain_buffers(sysctl_perf_event_max_stack);
 	if (err)
