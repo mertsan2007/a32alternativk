@@ -79,8 +79,9 @@ static u64 dev_map_bitmap_size(const union bpf_attr *attr)
 
 static int dev_map_init_map(struct bpf_dtab *dtab, union bpf_attr *attr)
 {
-	int err, cpu;
+	struct bpf_dtab *dtab;
 	u64 cost;
+	int err;
 
 	/* check sanity of attributes */
 	if (attr->max_entries == 0 || attr->key_size != 4 ||
