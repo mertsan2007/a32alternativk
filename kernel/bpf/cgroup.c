@@ -58,9 +58,11 @@ static void cgroup_bpf_release(struct work_struct *work)
 		}
 		old_array = rcu_dereference_protected(
 				cgrp->bpf.effective[type],
-				percpu_ref_is_dying(&cgrp->bpf.refcnt));
+				lockdep_is_held(&cgroup_mutex));
 		bpf_prog_array_free(old_array);
 	}
+
+	mutex_unlock(&cgroup_mutex);
 
 	percpu_ref_exit(&cgrp->bpf.refcnt);
 	cgroup_put(cgrp);
@@ -233,6 +235,9 @@ static int update_effective_progs(struct cgroup *cgrp,
 	css_for_each_descendant_pre(css, &cgrp->self) {
 		struct cgroup *desc = container_of(css, struct cgroup, self);
 
+		if (percpu_ref_is_zero(&desc->bpf.refcnt))
+			continue;
+
 		err = compute_effective_progs(desc, type, &desc->bpf.inactive);
 		if (err)
 			goto cleanup;
@@ -241,6 +246,14 @@ static int update_effective_progs(struct cgroup *cgrp,
 	/* all allocations were successful. Activate all prog arrays */
 	css_for_each_descendant_pre(css, &cgrp->self) {
 		struct cgroup *desc = container_of(css, struct cgroup, self);
+
+		if (percpu_ref_is_zero(&desc->bpf.refcnt)) {
+			if (unlikely(desc->bpf.inactive)) {
+				bpf_prog_array_free(desc->bpf.inactive);
+				desc->bpf.inactive = NULL;
+			}
+			continue;
+		}
 
 		activate_effective_progs(desc, type, desc->bpf.inactive);
 		desc->bpf.inactive = NULL;
