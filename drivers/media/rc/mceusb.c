@@ -42,7 +42,7 @@
 #include <linux/pm_wakeup.h>
 #include <media/rc-core.h>
 
-#define DRIVER_VERSION	"1.94"
+#define DRIVER_VERSION	"1.95"
 #define DRIVER_AUTHOR	"Jarod Wilson <jarod@redhat.com>"
 #define DRIVER_DESC	"Windows Media Center Ed. eHome Infrared Transceiver " \
 			"device driver"
@@ -1066,10 +1066,10 @@ static int mceusb_set_timeout(struct rc_dev *dev, unsigned int timeout)
 	cmdbuf[2] = units >> 8;
 	cmdbuf[3] = units;
 
-	mce_async_out(ir, cmdbuf, sizeof(cmdbuf));
+	mce_command_out(ir, cmdbuf, sizeof(cmdbuf));
 
 	/* get receiver timeout value */
-	mce_async_out(ir, GET_RX_TIMEOUT, sizeof(GET_RX_TIMEOUT));
+	mce_command_out(ir, GET_RX_TIMEOUT, sizeof(GET_RX_TIMEOUT));
 
 	return 0;
 }
@@ -1094,7 +1094,7 @@ static int mceusb_set_rx_wideband(struct rc_dev *dev, int enable)
 		ir->wideband_rx_enabled = false;
 		cmdbuf[2] = 1;	/* port 1 is long range receiver */
 	}
-	mce_async_out(ir, cmdbuf, sizeof(cmdbuf));
+	mce_command_out(ir, cmdbuf, sizeof(cmdbuf));
 	/* response from device sets ir->learning_active */
 
 	return 0;
@@ -1117,7 +1117,7 @@ static int mceusb_set_rx_carrier_report(struct rc_dev *dev, int enable)
 		ir->carrier_report_enabled = true;
 		if (!ir->learning_active) {
 			cmdbuf[2] = 2;	/* port 2 is short range receiver */
-			mce_async_out(ir, cmdbuf, sizeof(cmdbuf));
+			mce_command_out(ir, cmdbuf, sizeof(cmdbuf));
 		}
 	} else {
 		ir->carrier_report_enabled = false;
@@ -1128,7 +1128,7 @@ static int mceusb_set_rx_carrier_report(struct rc_dev *dev, int enable)
 		 */
 		if (ir->learning_active && !ir->wideband_rx_enabled) {
 			cmdbuf[2] = 1;	/* port 1 is long range receiver */
-			mce_async_out(ir, cmdbuf, sizeof(cmdbuf));
+			mce_command_out(ir, cmdbuf, sizeof(cmdbuf));
 		}
 	}
 
