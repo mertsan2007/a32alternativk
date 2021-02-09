@@ -1973,6 +1973,7 @@ static int check_stack_write(struct bpf_verifier_env *env,
 	} else if (reg && is_spillable_regtype(reg->type)) {
 		/* register containing pointer is being spilled into stack */
 		if (size != BPF_REG_SIZE) {
+			verbose_linfo(env, insn_idx, "; ");
 			verbose(env, "invalid size of register spill\n");
 			return -EACCES;
 		}
@@ -2040,6 +2041,7 @@ static int check_stack_read(struct bpf_verifier_env *env,
 	if (stype[0] == STACK_SPILL) {
 		if (size != BPF_REG_SIZE) {
 			if (reg->type != SCALAR_VALUE) {
+				verbose_linfo(env, env->insn_idx, "; ");
 				verbose(env, "invalid size of register fill\n");
 				return -EACCES;
 			}
@@ -3022,7 +3024,7 @@ static int __check_stack_boundary(struct bpf_verifier_env *env, u32 regno,
 				  int off, int access_size,
 				  bool zero_size_allowed)
 {
-	struct bpf_reg_state *reg = cur_regs(env) + regno;
+	struct bpf_reg_state *reg = reg_state(env, regno);
 
 	if (off >= 0 || off < -MAX_BPF_STACK || off + access_size > 0 ||
 	    access_size < 0 || (access_size == 0 && !zero_size_allowed)) {
@@ -6150,7 +6152,7 @@ static int check_cond_jmp_op(struct bpf_verifier_env *env,
 
 	if (BPF_SRC(insn->code) == BPF_K)
 		pred = is_branch_taken(dst_reg, insn->imm,
-					   opcode, is_jmp32);
+				       opcode, is_jmp32);
 	else if (src_reg->type == SCALAR_VALUE &&
 		 tnum_is_const(src_reg->var_off))
 		pred = is_branch_taken(dst_reg, src_reg->var_off.value,
@@ -6477,7 +6479,7 @@ static int check_return_code(struct bpf_verifier_env *env)
 			verbose(env, "has unknown scalar value");
 		}
 		tnum_strn(tn_buf, sizeof(tn_buf), range);
-		verbose(env, " should have been %s\n", tn_buf);
+		verbose(env, " should have been in %s\n", tn_buf);
 		return -EINVAL;
 	}
 
@@ -9595,9 +9597,6 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr,
 	env->strict_alignment = !!(attr->prog_flags & BPF_F_STRICT_ALIGNMENT);
 	if (!IS_ENABLED(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS))
 		env->strict_alignment = true;
-	if (attr->prog_flags & BPF_F_ANY_ALIGNMENT)
-		env->strict_alignment = false;
-
 	if (attr->prog_flags & BPF_F_ANY_ALIGNMENT)
 		env->strict_alignment = false;
 
