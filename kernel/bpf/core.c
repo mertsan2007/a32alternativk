@@ -1420,7 +1420,7 @@ select_insn:
 		insn++;
 		CONT;
 	ALU_ARSH_X:
-		DST = (u64) (u32) (((s32) DST) >> SRC);
+		DST = (u64) (u32) (((s32) DST) >> (SRC & 31));
 		CONT;
 	ALU_ARSH_K:
 		DST = (u64) (u32) (((s32) DST) >> IMM);
