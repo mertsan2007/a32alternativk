@@ -6953,10 +6953,8 @@ static void adjust_insn_aux_data(struct bpf_verifier_env *env,
 				 struct bpf_insn_aux_data *new_data,
 				 struct bpf_prog *new_prog, u32 off, u32 cnt)
 {
-	struct bpf_insn_aux_data *old_data = env->insn_aux_data;
-	struct bpf_insn *insn = new_prog->insnsi;
+	struct bpf_insn_aux_data *new_data, *old_data = env->insn_aux_data;
 	bool old_seen = old_data[off].seen;
-	u32 prog_len;
 	int i;
 
 	/* aux info at OFF always needs adjustment, no matter fast path
@@ -6977,7 +6975,6 @@ static void adjust_insn_aux_data(struct bpf_verifier_env *env,
 	for (i = off; i < off + cnt - 1; i++) {
 		/* Expand insni[off]'s seen count to the patched range. */
 		new_data[i].seen = old_seen;
-		new_data[i].zext_dst = insn_has_def32(env, insn + i);
 	}
 	env->insn_aux_data = new_data;
 	vfree(old_data);
