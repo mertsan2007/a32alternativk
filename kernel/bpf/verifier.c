@@ -6516,7 +6516,6 @@ static int do_check(struct bpf_verifier_env *env)
 
 		regs = cur_regs(env);
 		sanitize_mark_insn_seen(env);
-		prev_insn_idx = env->insn_idx;
 
 		if (class == BPF_ALU || class == BPF_ALU64) {
 			err = check_alu_op(env, insn);
