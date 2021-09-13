@@ -1175,6 +1175,7 @@ static u64 ___bpf_prog_run(u64 *regs, const struct bpf_insn *insn, u64 *stack)
 		/* Non-UAPI available opcodes. */
 		[BPF_JMP | BPF_CALL_ARGS] = &&JMP_CALL_ARGS,
 		[BPF_JMP | BPF_TAIL_CALL] = &&JMP_TAIL_CALL,
+		[BPF_ST  | BPF_NOSPEC] = &&ST_NOSPEC,
 	};
 #undef BPF_INSN_3_LBL
 #undef BPF_INSN_2_LBL
@@ -1378,44 +1379,7 @@ out:
 		CONT;
 	JMP_EXIT:
 		return BPF_R0;
-	/* JMP */
-#define COND_JMP(SIGN, OPCODE, CMP_OP)				\
-	JMP_##OPCODE##_X:					\
-		if ((SIGN##64) DST CMP_OP (SIGN##64) SRC) {	\
-			insn += insn->off;			\
-			CONT_JMP;				\
-		}						\
-		CONT;						\
-	JMP32_##OPCODE##_X:					\
-		if ((SIGN##32) DST CMP_OP (SIGN##32) SRC) {	\
-			insn += insn->off;			\
-			CONT_JMP;				\
-		}						\
-		CONT;						\
-	JMP_##OPCODE##_K:					\
-		if ((SIGN##64) DST CMP_OP (SIGN##64) IMM) {	\
-			insn += insn->off;			\
-			CONT_JMP;				\
-		}						\
-		CONT;						\
-	JMP32_##OPCODE##_K:					\
-		if ((SIGN##32) DST CMP_OP (SIGN##32) IMM) {	\
-			insn += insn->off;			\
-			CONT_JMP;				\
-		}						\
-		CONT;
-	COND_JMP(u, JEQ, ==)
-	COND_JMP(u, JNE, !=)
-	COND_JMP(u, JGT, >)
-	COND_JMP(u, JLT, <)
-	COND_JMP(u, JGE, >=)
-	COND_JMP(u, JLE, <=)
-	COND_JMP(u, JSET, &)
-	COND_JMP(s, JSGT, >)
-	COND_JMP(s, JSLT, <)
-	COND_JMP(s, JSGE, >=)
-	COND_JMP(s, JSLE, <=)
-#undef COND_JMP
+
 	/* ST, STX and LDX*/
 	ST_NOSPEC:
 		/* Speculation barrier for mitigating Speculative Store Bypass.
@@ -1427,7 +1391,9 @@ out:
 		 * reuse preexisting logic from Spectre v1 mitigation that
 		 * happens to produce the required code on x86 for v4 as well.
 		 */
+#ifdef CONFIG_X86
 		barrier_nospec();
+#endif
 		CONT;
 #define LDST(SIZEOP, SIZE)						\
 	STX_MEM_##SIZEOP:						\
