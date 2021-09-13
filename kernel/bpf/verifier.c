@@ -5893,8 +5893,8 @@ next:
 }
 
 /* Returns true if (rold safe implies rcur safe) */
-static bool regsafe(struct bpf_verifier_env *env, struct bpf_reg_state *rold,
-		    struct bpf_reg_state *rcur, struct bpf_id_pair *idmap)
+static bool regsafe(struct bpf_reg_state *rold, struct bpf_reg_state *rcur,
+		    struct bpf_id_pair *idmap)
 {
 	bool equal;
 
@@ -6002,7 +6002,7 @@ static bool regsafe(struct bpf_verifier_env *env, struct bpf_reg_state *rold,
 
 static bool stacksafe(struct bpf_func_state *old,
 		      struct bpf_func_state *cur,
-		      struct idpair *idmap)
+		      struct bpf_id_pair *idmap)
 {
 	int i, spi;
 
@@ -6081,27 +6081,20 @@ static bool stacksafe(struct bpf_func_state *old,
  * whereas register type in current state is meaningful, it means that
  * the current state will reach 'bpf_exit' instruction safely
  */
-static bool func_states_equal(struct bpf_func_state *old,
+static bool func_states_equal(struct bpf_verifier_env *env, struct bpf_func_state *old,
 			      struct bpf_func_state *cur)
 {
 	int i;
 
-	idmap = kcalloc(ID_MAP_SIZE, sizeof(struct idpair), GFP_KERNEL);
-	/* If we failed to allocate the idmap, just say it's not safe */
-	if (!idmap)
+	memset(env->idmap_scratch, 0, sizeof(env->idmap_scratch));
+	for (i = 0; i < MAX_BPF_REG; i++)
+		if (!regsafe(&old->regs[i], &cur->regs[i], env->idmap_scratch))
+			return false;
+
+	if (!stacksafe(old, cur, env->idmap_scratch))
 		return false;
 
-	for (i = 0; i < MAX_BPF_REG; i++) {
-		if (!regsafe(&old->regs[i], &cur->regs[i], idmap))
-			goto out_free;
-	}
-
-	if (!stacksafe(old, cur, idmap))
-		goto out_free;
-	ret = true;
-out_free:
-	kfree(idmap);
-	return ret;
+	return true;
 }
 
 static bool states_equal(struct bpf_verifier_env *env,
@@ -6125,7 +6118,7 @@ static bool states_equal(struct bpf_verifier_env *env,
 	for (i = 0; i <= old->curframe; i++) {
 		if (old->frame[i]->callsite != cur->frame[i]->callsite)
 			return false;
-		if (!func_states_equal(old->frame[i], cur->frame[i]))
+		if (!func_states_equal(env, old->frame[i], cur->frame[i]))
 			return false;
 	}
 	return true;
