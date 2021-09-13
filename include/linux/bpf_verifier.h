@@ -177,7 +177,6 @@ struct bpf_insn_aux_data {
 	int ctx_field_size; /* the ctx field size for load insn, maybe 0 */
 	bool seen; /* this insn was processed by the verifier */
 	bool sanitize_stack_spill; /* subject to Spectre v4 sanitation */
-	bool zext_dst; /* this insn zero extends dst reg */
 	u8 alu_state; /* used in combination with alu_limit */
 	bool prune_point;
 	unsigned int orig_idx; /* original instruction index */
