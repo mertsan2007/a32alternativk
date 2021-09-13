@@ -66,46 +66,6 @@ struct bpf_reg_state {
 	 * came from, when one is tested for != NULL.
 	 */
 	u32 id;
-	/* PTR_TO_SOCKET and PTR_TO_TCP_SOCK could be a ptr returned
-	 * from a pointer-cast helper, bpf_sk_fullsock() and
-	 * bpf_tcp_sock().
-	 *
-	 * Consider the following where "sk" is a reference counted
-	 * pointer returned from "sk = bpf_sk_lookup_tcp();":
-	 *
-	 * 1: sk = bpf_sk_lookup_tcp();
-	 * 2: if (!sk) { return 0; }
-	 * 3: fullsock = bpf_sk_fullsock(sk);
-	 * 4: if (!fullsock) { bpf_sk_release(sk); return 0; }
-	 * 5: tp = bpf_tcp_sock(fullsock);
-	 * 6: if (!tp) { bpf_sk_release(sk); return 0; }
-	 * 7: bpf_sk_release(sk);
-	 * 8: snd_cwnd = tp->snd_cwnd;  // verifier will complain
-	 *
-	 * After bpf_sk_release(sk) at line 7, both "fullsock" ptr and
-	 * "tp" ptr should be invalidated also.  In order to do that,
-	 * the reg holding "fullsock" and "sk" need to remember
-	 * the original refcounted ptr id (i.e. sk_reg->id) in ref_obj_id
-	 * such that the verifier can reset all regs which have
-	 * ref_obj_id matching the sk_reg->id.
-	 *
-	 * sk_reg->ref_obj_id is set to sk_reg->id at line 1.
-	 * sk_reg->id will stay as NULL-marking purpose only.
-	 * After NULL-marking is done, sk_reg->id can be reset to 0.
-	 *
-	 * After "fullsock = bpf_sk_fullsock(sk);" at line 3,
-	 * fullsock_reg->ref_obj_id is set to sk_reg->ref_obj_id.
-	 *
-	 * After "tp = bpf_tcp_sock(fullsock);" at line 5,
-	 * tp_reg->ref_obj_id is set to fullsock_reg->ref_obj_id
-	 * which is the same as sk_reg->ref_obj_id.
-	 *
-	 * From the verifier perspective, if sk, fullsock and tp
-	 * are not NULL, they are the same ptr with different
-	 * reg->type.  In particular, bpf_sk_release(tp) is also
-	 * allowed and has the same effect as bpf_sk_release(sk).
-	 */
-	u32 ref_obj_id;
 	/* For scalar types (SCALAR_VALUE), this represents our knowledge of
 	 * the actual value.
 	 * For pointer types, this represents the variable part of the offset
@@ -122,15 +82,15 @@ struct bpf_reg_state {
 	s64 smax_value; /* maximum possible (s64)value */
 	u64 umin_value; /* minimum possible (u64)value */
 	u64 umax_value; /* maximum possible (u64)value */
+	/* parentage chain for liveness checking */
+	struct bpf_reg_state *parent;
 	/* Inside the callee two registers can be both PTR_TO_STACK like
 	 * R1=fp-8 and R2=fp-8, but one of them points to this function stack
 	 * while another to the caller's stack. To differentiate them 'frameno'
 	 * is used which is an index in bpf_verifier_state->frame[] array
 	 * pointing to bpf_func_state.
-	 * This field must be second to last, for states_equal() reasons.
 	 */
 	u32 frameno;
-	/* This field must be last, for states_equal() reasons. */
 	enum bpf_reg_liveness live;
 	/* if (!precise && SCALAR_VALUE) min/max/tnum don't affect safety */
 	bool precise;
@@ -155,7 +115,6 @@ struct bpf_stack_state {
  */
 struct bpf_func_state {
 	struct bpf_reg_state regs[MAX_BPF_REG];
-	struct bpf_verifier_state *parent;
 	/* index of call instruction that called into this func */
 	int callsite;
 	/* stack frame number of this function state from pov of
@@ -177,7 +136,6 @@ struct bpf_func_state {
 struct bpf_verifier_state {
 	/* call stack tracking */
 	struct bpf_func_state *frame[MAX_CALL_FRAMES];
-	struct bpf_verifier_state *parent;
 	u32 curframe;
 	bool speculative;
 
