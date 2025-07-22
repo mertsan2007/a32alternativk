@@ -10,9 +10,6 @@
 #include <linux/etherdevice.h>
 #include <linux/filter.h>
 #include <linux/sched/signal.h>
-#include <net/bpf_sk_storage.h>
-#include <net/sock.h>
-#include <net/tcp.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/bpf_test_run.h>
@@ -307,13 +304,8 @@ int bpf_prog_test_run_skb(struct bpf_prog *prog, const union bpf_attr *kattr,
 	if (is_l2)
 		__skb_push(skb, hh_len);
 	if (is_direct_pkt_access)
-		bpf_compute_data_pointers(skb);
-	ret = convert___skb_to_skb(skb, ctx);
-	if (ret)
-		goto out;
-	ret = bpf_test_run(prog, skb, repeat, &retval, &duration);
-	if (ret)
-		goto out;
+		bpf_compute_data_end(skb);
+	retval = bpf_test_run(prog, skb, repeat, &duration);
 	if (!is_l2) {
 		if (skb_headroom(skb) < hh_len) {
 			int nhead = HH_DATA_ALIGN(hh_len - skb_headroom(skb));
@@ -363,7 +355,6 @@ int bpf_prog_test_run_xdp(struct bpf_prog *prog, const union bpf_attr *kattr,
 
 	xdp.data_hard_start = data;
 	xdp.data = data + XDP_PACKET_HEADROOM + NET_IP_ALIGN;
-	xdp.data_meta = xdp.data;
 	xdp.data_end = xdp.data + size;
 
 	rxqueue = __netif_get_rx_queue(current->nsproxy->net_ns->loopback_dev, 0);

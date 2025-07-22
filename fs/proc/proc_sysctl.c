@@ -595,11 +595,6 @@ static ssize_t proc_sys_call_handler(struct file *filp, void __user *buf,
 	if (!table->proc_handler)
 		goto out;
 
-	error = BPF_CGROUP_RUN_PROG_SYSCTL(head, table, write, buf, &count,
-					   ppos, &new_buf);
-	if (error)
-		goto out;
-
 	/* careful: calling conventions are nasty here */
 	if (new_buf) {
 		mm_segment_t old_fs;

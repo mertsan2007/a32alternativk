@@ -131,9 +131,18 @@ static struct bpf_map *stack_map_alloc(union bpf_attr *attr)
 		return ERR_PTR(-ENOMEM);
 	}
 
-	bpf_map_init_from_attr(&smap->map, attr);
+	smap->map.map_type = attr->map_type;
+	smap->map.key_size = attr->key_size;
 	smap->map.value_size = value_size;
+	smap->map.max_entries = attr->max_entries;
+	smap->map.map_flags = attr->map_flags;
 	smap->n_buckets = n_buckets;
+	smap->map.pages = round_up(cost, PAGE_SIZE) >> PAGE_SHIFT;
+	smap->map.numa_node = bpf_map_attr_numa_node(attr);
+
+	err = bpf_map_precharge_memlock(smap->map.pages);
+	if (err)
+		goto free_smap;
 
 	err = get_callchain_buffers(sysctl_perf_event_max_stack);
 	if (err)
@@ -621,7 +630,6 @@ const struct bpf_map_ops stack_trace_map_ops = {
 	.map_lookup_elem = stack_map_lookup_elem,
 	.map_update_elem = stack_map_update_elem,
 	.map_delete_elem = stack_map_delete_elem,
-	.map_check_btf = map_check_no_btf,
 };
 
 static int __init stack_map_init(void)
