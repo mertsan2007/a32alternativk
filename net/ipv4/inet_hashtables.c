@@ -308,43 +308,9 @@ struct sock *__inet_lookup_listener(struct net *net,
 	bool exact_dif = inet_exact_dif_match(net, skb);
 	struct inet_listen_hashbucket *ilb2;
 	struct sock *sk, *result = NULL;
-	struct hlist_nulls_node *node;
-	int score, hiscore = 0;
-	unsigned int hash2;
 	u32 phash = 0;
 
-	if (ilb->count <= 10 || !hashinfo->lhash2)
-		goto port_lookup;
-
-	/* Too many sk in the ilb bucket (which is hashed by port alone).
-	 * Try lhash2 (which is hashed by port and addr) instead.
-	 */
-
-	hash2 = ipv4_portaddr_hash(net, daddr, hnum);
-	ilb2 = inet_lhash2_bucket(hashinfo, hash2);
-	if (ilb2->count > ilb->count)
-		goto port_lookup;
-
-	result = inet_lhash2_lookup(net, ilb2, skb, doff,
-				    saddr, sport, daddr, hnum,
-				    dif, sdif);
-	if (result)
-		goto done;
-
-	/* Lookup lhash2 with INADDR_ANY */
-
-	hash2 = ipv4_portaddr_hash(net, htonl(INADDR_ANY), hnum);
-	ilb2 = inet_lhash2_bucket(hashinfo, hash2);
-	if (ilb2->count > ilb->count)
-		goto port_lookup;
-
-	result = inet_lhash2_lookup(net, ilb2, skb, doff,
-				    saddr, sport, daddr, hnum,
-				    dif, sdif);
-	goto done;
-
-port_lookup:
-	sk_nulls_for_each_rcu(sk, node, &ilb->nulls_head) {
+	sk_for_each_rcu(sk, &ilb->head) {
 		score = compute_score(sk, net, hnum, daddr,
 				      dif, sdif, exact_dif);
 		if (score > hiscore) {
@@ -561,11 +527,10 @@ static int inet_reuseport_add_sock(struct sock *sk,
 				   struct inet_listen_hashbucket *ilb)
 {
 	struct inet_bind_bucket *tb = inet_csk(sk)->icsk_bind_hash;
-	const struct hlist_nulls_node *node;
 	struct sock *sk2;
 	kuid_t uid = sock_i_uid(sk);
 
-	sk_nulls_for_each_rcu(sk2, node, &ilb->nulls_head) {
+	sk_for_each_rcu(sk2, &ilb->head) {
 		if (sk2 != sk &&
 		    sk2->sk_family == sk->sk_family &&
 		    ipv6_only_sock(sk2) == ipv6_only_sock(sk) &&
@@ -601,11 +566,9 @@ int __inet_hash(struct sock *sk, struct sock *osk)
 	}
 	if (IS_ENABLED(CONFIG_IPV6) && sk->sk_reuseport &&
 		sk->sk_family == AF_INET6)
-		__sk_nulls_add_node_tail_rcu(sk, &ilb->nulls_head);
+		hlist_add_tail_rcu(&sk->sk_node, &ilb->head);
 	else
-		__sk_nulls_add_node_rcu(sk, &ilb->nulls_head);
-	inet_hash2(hashinfo, sk);
-	ilb->count++;
+		hlist_add_head_rcu(&sk->sk_node, &ilb->head);
 	sock_set_flag(sk, SOCK_RCU_FREE);
 	sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
 unlock:
@@ -652,13 +615,12 @@ void inet_unhash(struct sock *sk)
 
 	if (rcu_access_pointer(sk->sk_reuseport_cb))
 		reuseport_detach_sock(sk);
-	if (listener) {
-		inet_unhash2(hashinfo, sk);
-		ilb->count--;
-	}
-	__sk_nulls_del_node_init_rcu(sk);
-	sock_prot_inuse_add(sock_net(sk), sk->sk_prot, -1);
-unlock:
+	if (listener)
+		done = __sk_del_node_init(sk);
+	else
+		done = __sk_nulls_del_node_init_rcu(sk);
+	if (done)
+		sock_prot_inuse_add(sock_net(sk), sk->sk_prot, -1);
 	spin_unlock_bh(lock);
 }
 EXPORT_SYMBOL_GPL(inet_unhash);
@@ -799,9 +761,7 @@ void inet_hashinfo_init(struct inet_hashinfo *h)
 
 	for (i = 0; i < INET_LHTABLE_SIZE; i++) {
 		spin_lock_init(&h->listening_hash[i].lock);
-		INIT_HLIST_NULLS_HEAD(&h->listening_hash[i].nulls_head,
-				      i + LISTENING_NULLS_BASE);
-		h->listening_hash[i].count = 0;
+		INIT_HLIST_HEAD(&h->listening_hash[i].head);
 	}
 
 	h->lhash2 = NULL;
