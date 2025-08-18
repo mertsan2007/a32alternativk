@@ -35,11 +35,6 @@
 #define _TLS_OFFLOAD_H
 
 #include <linux/types.h>
-#include <asm/byteorder.h>
-#include <linux/crypto.h>
-#include <linux/socket.h>
-#include <linux/tcp.h>
-#include <linux/skmsg.h>
 
 #include <net/tcp.h>
 #include <net/strparser.h>
@@ -183,17 +178,16 @@ enum {
 	TLS_PENDING_CLOSED_RECORD
 };
 
-enum tls_context_flags {
-	TLS_RX_SYNC_RUNNING = 0,
-	/* tls_dev_del was called for the RX side, device state was released,
-	 * but tls_ctx->netdev might still be kept, because TX-side driver
-	 * resources might not be released yet. Used to prevent the second
-	 * tls_dev_del call in tls_device_down if it happens simultaneously.
-	 */
-	TLS_RX_DEV_CLOSED = 2,
-};
+struct tls_context {
+	union {
+		struct tls_crypto_info crypto_send;
+		struct tls12_crypto_info_aes_gcm_128 crypto_send_aes_gcm_128;
+	};
 
-struct cipher_context {
+	struct list_head list;
+	struct net_device *netdev;
+	refcount_t refcount;
+
 	u16 prepend_size;
 	u16 tag_size;
 	u16 overhead_size;
@@ -201,38 +195,14 @@ struct cipher_context {
 	char *iv;
 	u16 rec_seq_size;
 	char *rec_seq;
-};
-
-union tls_crypto_context {
-	struct tls_crypto_info info;
-	struct tls12_crypto_info_aes_gcm_128 aes_gcm_128;
-};
-
-struct tls_context {
-	union tls_crypto_context crypto_send;
-	union tls_crypto_context crypto_recv;
-
-	struct list_head list;
-	struct net_device *netdev;
-	refcount_t refcount;
-
-	void *priv_ctx_tx;
-	void *priv_ctx_rx;
-
-	u8 tx_conf:3;
-	u8 rx_conf:3;
-
-	struct cipher_context tx;
-	struct cipher_context rx;
 
 	struct scatterlist *partially_sent_record;
 	u16 partially_sent_offset;
 
 	unsigned long flags;
-	bool in_tcp_sendpages;
-	bool pending_open_record_frags;
 
 	int (*push_pending_record)(struct sock *sk, int flags);
+	void (*free_resources)(struct sock *sk);
 
 	void (*sk_write_space)(struct sock *sk);
 	void (*sk_destruct)(struct sock *sk);
@@ -275,37 +245,6 @@ int tls_sw_sendmsg(struct sock *sk, struct msghdr *msg, size_t size);
 int tls_sw_sendpage(struct sock *sk, struct page *page,
 		    int offset, size_t size, int flags);
 void tls_sw_close(struct sock *sk, long timeout);
-void tls_sw_free_resources_tx(struct sock *sk);
-void tls_sw_free_resources_rx(struct sock *sk);
-void tls_sw_release_resources_rx(struct sock *sk);
-int tls_sw_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
-		   int nonblock, int flags, int *addr_len);
-bool tls_sw_stream_read(const struct sock *sk);
-ssize_t tls_sw_splice_read(struct socket *sock, loff_t *ppos,
-			   struct pipe_inode_info *pipe,
-			   size_t len, unsigned int flags);
-
-int tls_set_device_offload(struct sock *sk, struct tls_context *ctx);
-int tls_device_sendmsg(struct sock *sk, struct msghdr *msg, size_t size);
-int tls_device_sendpage(struct sock *sk, struct page *page,
-			int offset, size_t size, int flags);
-void tls_device_sk_destruct(struct sock *sk);
-void tls_device_init(void);
-void tls_device_cleanup(void);
-int tls_tx_records(struct sock *sk, int flags);
-
-struct tls_record_info *tls_get_record(struct tls_offload_context_tx *context,
-				       u32 seq, u64 *p_record_sn);
-
-static inline bool tls_record_is_start_marker(struct tls_record_info *rec)
-{
-	return rec->len == 0;
-}
-
-static inline u32 tls_record_start_seq(struct tls_record_info *rec)
-{
-	return rec->end_seq - rec->len;
-}
 
 void tls_sk_destruct(struct sock *sk, struct tls_context *ctx);
 int tls_push_sg(struct sock *sk, struct tls_context *ctx,
@@ -349,33 +288,7 @@ static inline bool tls_is_pending_open_record(struct tls_context *tls_ctx)
 
 static inline bool is_tx_ready(struct tls_sw_context_tx *ctx)
 {
-	struct tls_rec *rec;
-
-	rec = list_first_entry(&ctx->tx_list, struct tls_rec, list);
-	if (!rec)
-		return false;
-
-	return READ_ONCE(rec->tx_ready);
-}
-
-struct sk_buff *
-tls_validate_xmit_skb(struct sock *sk, struct net_device *dev,
-		      struct sk_buff *skb);
-
-static inline bool tls_is_sk_tx_device_offloaded(struct sock *sk)
-{
-#ifdef CONFIG_SOCK_VALIDATE_XMIT
-	return sk_fullsock(sk) &&
-	       (smp_load_acquire(&sk->sk_validate_xmit_skb) ==
-	       &tls_validate_xmit_skb);
-#else
-	return false;
-#endif
-}
-
-static inline void tls_err_abort(struct sock *sk, int err)
-{
-	sk->sk_err = err;
+	sk->sk_err = -EBADMSG;
 	sk->sk_error_report(sk);
 }
 
@@ -414,8 +327,8 @@ static inline void tls_fill_prepend(struct tls_context *ctx,
 	 * size KTLS_DTLS_HEADER_SIZE + KTLS_DTLS_NONCE_EXPLICIT_SIZE
 	 */
 	buf[0] = record_type;
-	buf[1] = TLS_VERSION_MINOR(ctx->crypto_send.info.version);
-	buf[2] = TLS_VERSION_MAJOR(ctx->crypto_send.info.version);
+	buf[1] = TLS_VERSION_MINOR(ctx->crypto_send.version);
+	buf[2] = TLS_VERSION_MAJOR(ctx->crypto_send.version);
 	/* we can use IV for nonce explicit according to spec */
 	buf[3] = pkt_len >> 8;
 	buf[4] = pkt_len & 0xFF;
