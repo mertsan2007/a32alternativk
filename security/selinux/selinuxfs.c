@@ -161,15 +161,32 @@ static ssize_t sel_write_enforce(struct file *file, const char __user *buf,
 
 	old_value = enforcing_enabled(state);
 
-#ifdef CONFIG_SECURITY_SELINUX_ALWAYS_ENFORCE
-	// If always enforce option is set, selinux is always enforcing
+// [ SEC_SELINUX_PORTING_COMMON
+#if defined(CONFIG_ALWAYS_ENFORCE) || defined(CONFIG_ALWAYS_PERMISSIVE)
+#ifdef CONFIG_ALWAYS_ENFORCE
+	// If build is user build and enforce option is set, selinux is always enforcing
 	new_value = 1;
-#elif defined(CONFIG_SECURITY_SELINUX_ALWAYS_PERMISSIVE)
-	// If always permissive option is set, selinux is always permissive
-	new_value = 0;
+#elif CONFIG_ALWAYS_PERMISSIVE
+        // Set permissive in this case
+        new_value = 0;
 #endif
-
-	if (new_value != old_value) {
+        length = avc_has_perm(&selinux_state,
+				      current_sid(), SECINITSID_SECURITY,
+				      SECCLASS_SECURITY, SECURITY__SETENFORCE,
+				      NULL);
+	audit_log(current->audit_context, GFP_KERNEL, AUDIT_MAC_STATUS,
+			"enforcing=%d old_enforcing=%d auid=%u ses=%u"
+			" enabled=%d old-enabled=%d lsm=selinux res=1",
+			new_value, selinux_enforcing,
+			from_kuid(&init_user_ns, audit_get_loginuid(current)),
+			audit_get_sessionid(current),
+			selinux_enabled, selinux_enabled);
+        enforcing_set(state, new_value);
+	avc_ss_reset(state->avc, 0);
+	selnl_notify_setenforce(new_value);
+	selinux_status_update_setenforce(state, new_value);
+#else
+	if (new_value != selinux_enforcing) { // SEC_SELINUX_PORTING_COMMON Change to use RKP
 		length = avc_has_perm(&selinux_state,
 				      current_sid(), SECINITSID_SECURITY,
 				      SECCLASS_SECURITY, SECURITY__SETENFORCE,
@@ -1549,6 +1566,7 @@ static struct avc_cache_stats *sel_avc_get_stat_idx(loff_t *idx)
 		*idx = cpu + 1;
 		return &per_cpu(avc_cache_stats, cpu);
 	}
+	(*idx)++;
 	return NULL;
 }
 

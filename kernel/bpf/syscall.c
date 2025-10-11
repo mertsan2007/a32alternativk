@@ -44,7 +44,8 @@ static DEFINE_SPINLOCK(prog_idr_lock);
 static DEFINE_IDR(map_idr);
 static DEFINE_SPINLOCK(map_idr_lock);
 
-int sysctl_unprivileged_bpf_disabled __read_mostly;
+int sysctl_unprivileged_bpf_disabled __read_mostly =
+	IS_BUILTIN(CONFIG_BPF_UNPRIV_DEFAULT_OFF) ? 2 : 0;
 
 static const struct bpf_map_ops * const bpf_map_types[] = {
 #define BPF_PROG_TYPE(_id, _ops)
@@ -514,6 +515,10 @@ static int map_create(union bpf_attr *attr)
 	map = find_and_alloc_map(attr);
 	if (IS_ERR(map))
 		return PTR_ERR(map);
+
+	err = bpf_obj_name_cpy(map->name, attr->map_name);
+	if (err)
+		goto free_map_nouncharge;
 
 	atomic_set(&map->refcnt, 1);
 	atomic_set(&map->usercnt, 1);
@@ -1466,6 +1471,11 @@ static int bpf_prog_load(union bpf_attr *attr, union bpf_attr __user *uattr)
 	if (err < 0)
 		goto free_prog;
 
+	prog->aux->load_time = ktime_get_boot_ns();
+	err = bpf_obj_name_cpy(prog->aux->name, attr->prog_name);
+	if (err)
+		goto free_prog;
+
 	/* run eBPF verifier */
 	err = bpf_check(&prog, attr, uattr);
 	if (err < 0)
@@ -2286,6 +2296,7 @@ static int bpf_map_get_info_by_fd(struct bpf_map *map,
 	info.value_size = map->value_size;
 	info.max_entries = map->max_entries;
 	info.map_flags = map->map_flags;
+	memcpy(info.name, map->name, sizeof(map->name));
 
 	if (map->btf) {
 		info.btf_id = btf_id(map->btf);

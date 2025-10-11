@@ -247,6 +247,36 @@ static int sysrq_sysctl_handler(struct ctl_table *table, int write,
 
 #endif
 
+#ifdef CONFIG_BPF_SYSCALL
+
+void __weak unpriv_ebpf_notify(int new_state)
+{
+}
+
+static int bpf_unpriv_handler(struct ctl_table *table, int write,
+                             void *buffer, size_t *lenp, loff_t *ppos)
+{
+	int ret, unpriv_enable = *(int *)table->data;
+	bool locked_state = unpriv_enable == 1;
+	struct ctl_table tmp = *table;
+
+	if (write && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	tmp.data = &unpriv_enable;
+	ret = proc_dointvec_minmax(&tmp, write, buffer, lenp, ppos);
+	if (write && !ret) {
+		if (locked_state && unpriv_enable != 1)
+			return -EPERM;
+		*(int *)table->data = unpriv_enable;
+	}
+
+	unpriv_ebpf_notify(unpriv_enable);
+
+	return ret;
+}
+#endif
+
 static struct ctl_table kern_table[];
 static struct ctl_table vm_table[];
 static struct ctl_table fs_table[];
@@ -1772,22 +1802,6 @@ static struct ctl_table vm_table[] = {
 		.extra1		= (void *)&mmap_rnd_compat_bits_min,
 		.extra2		= (void *)&mmap_rnd_compat_bits_max,
 	},
-#endif
-#ifdef CONFIG_SWAP
-	{
-		.procname	= "swap_ratio",
-		.data		= &sysctl_swap_ratio,
-		.maxlen		= sizeof(sysctl_swap_ratio),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-	},
-	{
-		.procname	= "swap_ratio_enable",
-		.data		= &sysctl_swap_ratio_enable,
-		.maxlen		= sizeof(sysctl_swap_ratio_enable),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-    },
 #endif
 #ifdef CONFIG_USERFAULTFD
 	{
