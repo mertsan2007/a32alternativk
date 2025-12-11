@@ -663,6 +663,10 @@ unlock:
 }
 EXPORT_SYMBOL_GPL(inet_unhash);
 
+#define INET_TABLE_PERTURB_SHIFT 8
+#define INET_TABLE_PERTURB_SIZE (1 << INET_TABLE_PERTURB_SHIFT)
+static u32 *table_perturb;
+
 int __inet_hash_connect(struct inet_timewait_death_row *death_row,
 		struct sock *sk, u32 port_offset,
 		int (*check_established)(struct inet_timewait_death_row *,
@@ -700,6 +704,9 @@ int __inet_hash_connect(struct inet_timewait_death_row *death_row,
 	remaining = high - low;
 	if (likely(remaining > 1))
 		remaining &= ~1U;
+
+	net_get_random_once(table_perturb,
+			    INET_TABLE_PERTURB_SIZE * sizeof(*table_perturb));
 
 	offset = (hint + port_offset) % remaining;
 	/* In first pass we try ports of @low parity.

@@ -4611,6 +4611,8 @@ skip_classify:
 		if (unlikely(skb_orphan_frags_rx(skb, GFP_ATOMIC)))
 			goto drop;
 //		*ppt_prev = pt_prev;
+		else
+			ret = pt_prev->func(skb, skb->dev, pt_prev, orig_dev);
 	} else {
 drop:
 		if (!deliver_exact)
@@ -4655,66 +4657,66 @@ int netif_receive_skb_core(struct sk_buff *skb)
 }
 EXPORT_SYMBOL(netif_receive_skb_core);
 
-static inline void __netif_receive_skb_list_ptype(struct list_head *head,
-						  struct packet_type *pt_prev,
-						  struct net_device *orig_dev)
-{
-	struct sk_buff *skb, *next;
-
-	if (!pt_prev)
-		return;
-	if (list_empty(head))
-		return;
-	if (pt_prev->list_func != NULL)
-		pt_prev->list_func(head, pt_prev, orig_dev);
-	else
-		list_for_each_entry_safe(skb, next, head, list) {
-			skb_list_del_init(skb);
-			pt_prev->func(skb, skb->dev, pt_prev, orig_dev);
-		}
-}
-
-static void __netif_receive_skb_list_core(struct list_head *head, bool pfmemalloc)
-{
-	/* Fast-path assumptions:
-	 * - There is no RX handler.
-	 * - Only one packet_type matches.
-	 * If either of these fails, we will end up doing some per-packet
-	 * processing in-line, then handling the 'last ptype' for the whole
-	 * sublist.  This can't cause out-of-order delivery to any single ptype,
-	 * because the 'last ptype' must be constant across the sublist, and all
-	 * other ptypes are handled per-packet.
-	 */
-	/* Current (common) ptype of sublist */
-	struct packet_type *pt_curr = NULL;
-	/* Current (common) orig_dev of sublist */
-	struct net_device *od_curr = NULL;
-	struct list_head sublist;
-	struct sk_buff *skb, *next;
-
-	INIT_LIST_HEAD(&sublist);
-	list_for_each_entry_safe(skb, next, head, list) {
-		struct net_device *orig_dev = skb->dev;
-		struct packet_type *pt_prev = NULL;
-
-		skb_list_del_init(skb);
-		__netif_receive_skb_core(skb, pfmemalloc);
-		if (!pt_prev)
-			continue;
-		if (pt_curr != pt_prev || od_curr != orig_dev) {
-			/* dispatch old sublist */
-			__netif_receive_skb_list_ptype(&sublist, pt_curr, od_curr);
-			/* start new sublist */
-			INIT_LIST_HEAD(&sublist);
-			pt_curr = pt_prev;
-			od_curr = orig_dev;
-		}
-		list_add_tail(&skb->list, &sublist);
-	}
-
-	/* dispatch final sublist */
-	__netif_receive_skb_list_ptype(&sublist, pt_curr, od_curr);
-}
+//static inline void __netif_receive_skb_list_ptype(struct list_head *head,
+//						  struct packet_type *pt_prev,
+//						  struct net_device *orig_dev)
+//{
+//	struct sk_buff *skb, *next;
+//
+//	if (!pt_prev)
+//		return;
+//	if (list_empty(head))
+//		return;
+//	if (pt_prev->list_func != NULL)
+//		pt_prev->list_func(head, pt_prev, orig_dev);
+//	else
+//		list_for_each_entry_safe(skb, next, head, list) {
+//			skb_list_del_init(skb);
+//			pt_prev->func(skb, skb->dev, pt_prev, orig_dev);
+//		}
+//}
+//
+//static void __netif_receive_skb_list_core(struct list_head *head, bool pfmemalloc)
+//{
+//	/* Fast-path assumptions:
+//	 * - There is no RX handler.
+//	 * - Only one packet_type matches.
+//	 * If either of these fails, we will end up doing some per-packet
+//	 * processing in-line, then handling the 'last ptype' for the whole
+//	 * sublist.  This can't cause out-of-order delivery to any single ptype,
+//	 * because the 'last ptype' must be constant across the sublist, and all
+//	 * other ptypes are handled per-packet.
+//	 */
+//	/* Current (common) ptype of sublist */
+//	struct packet_type *pt_curr = NULL;
+//	/* Current (common) orig_dev of sublist */
+//	struct net_device *od_curr = NULL;
+//	struct list_head sublist;
+//	struct sk_buff *skb, *next;
+//
+//	INIT_LIST_HEAD(&sublist);
+//	list_for_each_entry_safe(skb, next, head, list) {
+//		struct net_device *orig_dev = skb->dev;
+//		struct packet_type *pt_prev = NULL;
+//
+//		skb_list_del_init(skb);
+//		__netif_receive_skb_core(skb, pfmemalloc);
+//		if (!pt_prev)
+//			continue;
+//		if (pt_curr != pt_prev || od_curr != orig_dev) {
+//			/* dispatch old sublist */
+//			__netif_receive_skb_list_ptype(&sublist, pt_curr, od_curr);
+//			/* start new sublist */
+//			INIT_LIST_HEAD(&sublist);
+//			pt_curr = pt_prev;
+//			od_curr = orig_dev;
+//		}
+//		list_add_tail(&skb->list, &sublist);
+//	}
+//
+//	/* dispatch final sublist */
+//	__netif_receive_skb_list_ptype(&sublist, pt_curr, od_curr);
+//}
 
 static int __netif_receive_skb(struct sk_buff *skb)
 {
@@ -4813,54 +4815,54 @@ static int netif_receive_skb_internal(struct sk_buff *skb)
 	return ret;
 }
 
-static void netif_receive_skb_list_internal(struct list_head *head)
-{
-	struct bpf_prog *xdp_prog = NULL;
-	struct sk_buff *skb, *next;
-	struct list_head sublist;
-
-	INIT_LIST_HEAD(&sublist);
-	list_for_each_entry_safe(skb, next, head, list) {
-		net_timestamp_check(netdev_tstamp_prequeue, skb);
-		skb_list_del_init(skb);
-		if (!skb_defer_rx_timestamp(skb))
-			list_add_tail(&skb->list, &sublist);
-	}
-	list_splice_init(&sublist, head);
-
-	if (static_key_false(&generic_xdp_needed_key)) {
-		preempt_disable();
-		rcu_read_lock();
-		list_for_each_entry_safe(skb, next, head, list) {
-			xdp_prog = rcu_dereference(skb->dev->xdp_prog);
-			skb_list_del_init(skb);
-			if (do_xdp_generic(xdp_prog, skb) == XDP_PASS)
-				list_add_tail(&skb->list, &sublist);
-		}
-		rcu_read_unlock();
-		preempt_enable();
-		/* Put passed packets back on main list */
-		list_splice_init(&sublist, head);
-	}
-
-	rcu_read_lock();
-#ifdef CONFIG_RPS
-	if (static_key_false(&rps_needed)) {
-		list_for_each_entry_safe(skb, next, head, list) {
-			struct rps_dev_flow voidflow, *rflow = &voidflow;
-			int cpu = get_rps_cpu(skb->dev, skb, &rflow);
-
-			if (cpu >= 0) {
-				/* Will be handled, remove from list */
-				skb_list_del_init(skb);
-				enqueue_to_backlog(skb, cpu, &rflow->last_qtail);
-			}
-		}
-	}
-#endif
-	__netif_receive_skb(head);
-	rcu_read_unlock();
-}
+//static void netif_receive_skb_list_internal(struct list_head *head)
+//{
+//	struct bpf_prog *xdp_prog = NULL;
+//	struct sk_buff *skb, *next;
+//	struct list_head sublist;
+//
+//	INIT_LIST_HEAD(&sublist);
+//	list_for_each_entry_safe(skb, next, head, list) {
+//		net_timestamp_check(netdev_tstamp_prequeue, skb);
+//		skb_list_del_init(skb);
+//		if (!skb_defer_rx_timestamp(skb))
+//			list_add_tail(&skb->list, &sublist);
+//	}
+//	list_splice_init(&sublist, head);
+//
+//	if (static_key_false(&generic_xdp_needed_key)) {
+//		preempt_disable();
+//		rcu_read_lock();
+//		list_for_each_entry_safe(skb, next, head, list) {
+//			xdp_prog = rcu_dereference(skb->dev->xdp_prog);
+//			skb_list_del_init(skb);
+//			if (do_xdp_generic(xdp_prog, skb) == XDP_PASS)
+//				list_add_tail(&skb->list, &sublist);
+//		}
+//		rcu_read_unlock();
+//		preempt_enable();
+//		/* Put passed packets back on main list */
+//		list_splice_init(&sublist, head);
+//	}
+//
+//	rcu_read_lock();
+//#ifdef CONFIG_RPS
+//	if (static_key_false(&rps_needed)) {
+//		list_for_each_entry_safe(skb, next, head, list) {
+//			struct rps_dev_flow voidflow, *rflow = &voidflow;
+//			int cpu = get_rps_cpu(skb->dev, skb, &rflow);
+//
+//			if (cpu >= 0) {
+//				/* Will be handled, remove from list */
+//				skb_list_del_init(skb);
+//				enqueue_to_backlog(skb, cpu, &rflow->last_qtail);
+//			}
+//		}
+//	}
+//#endif
+//	__netif_receive_skb(head);
+//	rcu_read_unlock();
+//}
 
 /**
  *	netif_receive_skb - process receive buffer from network
@@ -4895,19 +4897,19 @@ EXPORT_SYMBOL(netif_receive_skb);
  *	This function may only be called from softirq context and interrupts
  *	should be enabled.
  */
-void netif_receive_skb_list(struct list_head *head)
-{
-	struct sk_buff *skb;
-
-	if (list_empty(head))
-		return;
-
-	list_for_each_entry(skb, head, list)
-		trace_netif_receive_skb_list_entry(skb);
-
-	netif_receive_skb_list_internal(head);
-}
-EXPORT_SYMBOL(netif_receive_skb_list);
+//void netif_receive_skb_list(struct list_head *head)
+//{
+//	struct sk_buff *skb;
+//
+//	if (list_empty(head))
+//		return;
+//
+//	list_for_each_entry(skb, head, list)
+//		trace_netif_receive_skb_list_entry(skb);
+//
+//	netif_receive_skb_list_internal(head);
+//}
+//EXPORT_SYMBOL(netif_receive_skb_list);
 
 DEFINE_PER_CPU(struct work_struct, flush_works);
 
@@ -5457,9 +5459,9 @@ static int process_backlog(struct napi_struct *napi, int quota)
 	bool again = true;
 	int work = 0;
 
-#if defined(NET_RX_BATCH_SOLUTION)
-	INIT_LIST_HEAD(&sd->skb_rx_list);
-#endif
+//#if defined(NET_RX_BATCH_SOLUTION)
+//	INIT_LIST_HEAD(&sd->skb_rx_list);
+//#endif
 
 	/* Check if we have pending ipi, its better to send them now,
 	 * not waiting net_rx_action() end.
@@ -5473,26 +5475,26 @@ static int process_backlog(struct napi_struct *napi, int quota)
 	while (again) {
 		struct sk_buff *skb;
 
-#if defined(NET_RX_BATCH_SOLUTION)
-		while ((skb = __skb_dequeue(&sd->process_queue))) {
-			input_queue_head_incr(sd);
-			list_add_tail(&skb->list, &sd->skb_rx_list);
-			if (++work >= quota) {
-				rcu_read_lock();
-				__netif_receive_skb(&sd->skb_rx_list);
-				rcu_read_unlock();
-				INIT_LIST_HEAD(&sd->skb_rx_list);
-				return work;
-			}
-		}
-
-		if (!list_empty(&sd->skb_rx_list)) {
-			rcu_read_lock();
-			__netif_receive_skb(&sd->skb_rx_list);
-			rcu_read_unlock();
-			INIT_LIST_HEAD(&sd->skb_rx_list);
-		}
-#else
+//#if defined(NET_RX_BATCH_SOLUTION)
+//		while ((skb = __skb_dequeue(&sd->process_queue))) {
+//			input_queue_head_incr(sd);
+//			list_add_tail(&skb->list, &sd->skb_rx_list);
+//			if (++work >= quota) {
+//				rcu_read_lock();
+//				__netif_receive_skb(&sd->skb_rx_list);
+//				rcu_read_unlock();
+//				INIT_LIST_HEAD(&sd->skb_rx_list);
+//				return work;
+//			}
+//		}
+//
+//		if (!list_empty(&sd->skb_rx_list)) {
+//			rcu_read_lock();
+//			__netif_receive_skb(&sd->skb_rx_list);
+//			rcu_read_unlock();
+//			INIT_LIST_HEAD(&sd->skb_rx_list);
+//		}
+//#else
 		while ((skb = __skb_dequeue(&sd->process_queue))) {
 			rcu_read_lock();
 			__netif_receive_skb(skb);
@@ -5502,7 +5504,7 @@ static int process_backlog(struct napi_struct *napi, int quota)
 				return work;
 
 		}
-#endif
+//#endif
 		local_irq_disable();
 		rps_lock(sd);
 		if (skb_queue_empty(&sd->input_pkt_queue)) {

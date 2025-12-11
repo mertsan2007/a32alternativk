@@ -1533,7 +1533,7 @@ int ccmni_rx_list_push(int md_id, int ccmni_idx, struct list_head *head,
 			napi_gro_receive(ccmni->napi, skb);
 		}
 #else
-		netif_receive_skb_list(head);
+		netif_receive_skb(head);
 #endif
 	} else {
 #ifdef ENABLE_WQ_GRO
