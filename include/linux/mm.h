@@ -26,6 +26,7 @@
 #include <linux/page_ref.h>
 #include <linux/memremap.h>
 #include <linux/overflow.h>
+#include <linux/ratelimit.h>
 
 struct mempolicy;
 struct anon_vma;

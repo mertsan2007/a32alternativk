@@ -379,13 +379,14 @@ HOST_LOADLIBES := $(HOST_LFS_LIBS)
 AS		?= $(CROSS_COMPILE)as
 LD		?= $(CROSS_COMPILE)ld
 LDGOLD		= $(CROSS_COMPILE)ld.gold
+CPP		= $(CC) -E
 AR		= $(CROSS_COMPILE)ar
 NM		= $(CROSS_COMPILE)nm
 OBJCOPY		= $(CROSS_COMPILE)objcopy
 OBJDUMP		= $(CROSS_COMPILE)objdump
 READELF		= $(CROSS_COMPILE)readelf
 STRIP		= $(CROSS_COMPILE)strip
-endif
+
 PAHOLE		= pahole
 AWK		= awk
 GENKSYMS	= scripts/genksyms/genksyms
