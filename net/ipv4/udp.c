@@ -123,7 +123,7 @@
 #endif
 // SEC_PRODUCT_FEATURE_KNOX_SUPPORT_NPA }
 
-#include <perf_tracker_internal.h>
+//#include <perf_tracker_internal.h>
 
 struct udp_table udp_table __read_mostly;
 EXPORT_SYMBOL(udp_table);
@@ -1639,7 +1639,7 @@ try_again:
 	if (!skb)
 		return err;
 
-	perf_net_pkt_trace(sk, skb, skb->len);
+
 	ulen = udp_skb_len(skb);
 	copied = len;
 	if (copied > ulen - off)
