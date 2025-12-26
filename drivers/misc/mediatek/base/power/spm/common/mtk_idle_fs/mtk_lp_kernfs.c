@@ -194,16 +194,16 @@ int mtk_lp_kernfs_create_file(struct kernfs_node *parent,
 	else
 		ops = &mtk_lp_kernfs_kfops_rw;
 
-	kn = __kernfs_create_file(parent, name,
-				mode & 0755,
-				4096, ops,
-				(void *)attr, NULL, NULL);
+	//kn = __kernfs_create_file(parent, name,
+	//			mode & 0755, NULL, NULL,
+	//			4096, ops,
+	//			(void *)attr, NULL, NULL);
 
 	if (IS_ERR(kn))
 		return PTR_ERR(kn);
 
-	if (node)
-		*node = kn;
+	//if (node)
+	//	*node = kn;
 	return 0;
 }
 
