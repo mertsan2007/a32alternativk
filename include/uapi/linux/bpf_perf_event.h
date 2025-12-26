@@ -11,6 +11,8 @@
 #include <linux/types.h>
 #include <linux/ptrace.h>
 
+typedef struct user_pt_regs bpf_user_pt_regs_t;
+
 struct bpf_perf_event_data {
 	struct pt_regs regs;
 	__u64 sample_period;
