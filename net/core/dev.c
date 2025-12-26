@@ -4610,7 +4610,6 @@ skip_classify:
 	if (pt_prev) {
 		if (unlikely(skb_orphan_frags_rx(skb, GFP_ATOMIC)))
 			goto drop;
-//		*ppt_prev = pt_prev;
 		else
 			ret = pt_prev->func(skb, skb->dev, pt_prev, orig_dev);
 	} else {
@@ -4754,55 +4753,6 @@ static int netif_receive_skb_internal(struct sk_buff *skb)
 	return ret;
 }
 
-//static void netif_receive_skb_list_internal(struct list_head *head)
-//{
-//	struct bpf_prog *xdp_prog = NULL;
-//	struct sk_buff *skb, *next;
-//	struct list_head sublist;
-//
-//	INIT_LIST_HEAD(&sublist);
-//	list_for_each_entry_safe(skb, next, head, list) {
-//		net_timestamp_check(netdev_tstamp_prequeue, skb);
-//		skb_list_del_init(skb);
-//		if (!skb_defer_rx_timestamp(skb))
-//			list_add_tail(&skb->list, &sublist);
-//	}
-//	list_splice_init(&sublist, head);
-//
-//	if (static_key_false(&generic_xdp_needed_key)) {
-//		preempt_disable();
-//		rcu_read_lock();
-//		list_for_each_entry_safe(skb, next, head, list) {
-//			xdp_prog = rcu_dereference(skb->dev->xdp_prog);
-//			skb_list_del_init(skb);
-//			if (do_xdp_generic(xdp_prog, skb) == XDP_PASS)
-//				list_add_tail(&skb->list, &sublist);
-//		}
-//		rcu_read_unlock();
-//		preempt_enable();
-//		/* Put passed packets back on main list */
-//		list_splice_init(&sublist, head);
-//	}
-//
-//	rcu_read_lock();
-//#ifdef CONFIG_RPS
-//	if (static_key_false(&rps_needed)) {
-//		list_for_each_entry_safe(skb, next, head, list) {
-//			struct rps_dev_flow voidflow, *rflow = &voidflow;
-//			int cpu = get_rps_cpu(skb->dev, skb, &rflow);
-//
-//			if (cpu >= 0) {
-//				/* Will be handled, remove from list */
-//				skb_list_del_init(skb);
-//				enqueue_to_backlog(skb, cpu, &rflow->last_qtail);
-//			}
-//		}
-//	}
-//#endif
-//	__netif_receive_skb(head);
-//	rcu_read_unlock();
-//}
-
 /**
  *	netif_receive_skb - process receive buffer from network
  *	@skb: buffer to process
@@ -4825,30 +4775,6 @@ int netif_receive_skb(struct sk_buff *skb)
 	return netif_receive_skb_internal(skb);
 }
 EXPORT_SYMBOL(netif_receive_skb);
-
-/**
- *	netif_receive_skb_list - process many receive buffers from network
- *	@head: list of skbs to process.
- *
- *	Since return value of netif_receive_skb() is normally ignored, and
- *	wouldn't be meaningful for a list, this function returns void.
- *
- *	This function may only be called from softirq context and interrupts
- *	should be enabled.
- */
-//void netif_receive_skb_list(struct list_head *head)
-//{
-//	struct sk_buff *skb;
-//
-//	if (list_empty(head))
-//		return;
-//
-//	list_for_each_entry(skb, head, list)
-//		trace_netif_receive_skb_list_entry(skb);
-//
-//	netif_receive_skb_list_internal(head);
-//}
-//EXPORT_SYMBOL(netif_receive_skb_list);
 
 DEFINE_PER_CPU(struct work_struct, flush_works);
 
@@ -5398,10 +5324,6 @@ static int process_backlog(struct napi_struct *napi, int quota)
 	bool again = true;
 	int work = 0;
 
-//#if defined(NET_RX_BATCH_SOLUTION)
-//	INIT_LIST_HEAD(&sd->skb_rx_list);
-//#endif
-
 	/* Check if we have pending ipi, its better to send them now,
 	 * not waiting net_rx_action() end.
 	 */
@@ -5414,26 +5336,6 @@ static int process_backlog(struct napi_struct *napi, int quota)
 	while (again) {
 		struct sk_buff *skb;
 
-//#if defined(NET_RX_BATCH_SOLUTION)
-//		while ((skb = __skb_dequeue(&sd->process_queue))) {
-//			input_queue_head_incr(sd);
-//			list_add_tail(&skb->list, &sd->skb_rx_list);
-//			if (++work >= quota) {
-//				rcu_read_lock();
-//				__netif_receive_skb(&sd->skb_rx_list);
-//				rcu_read_unlock();
-//				INIT_LIST_HEAD(&sd->skb_rx_list);
-//				return work;
-//			}
-//		}
-//
-//		if (!list_empty(&sd->skb_rx_list)) {
-//			rcu_read_lock();
-//			__netif_receive_skb(&sd->skb_rx_list);
-//			rcu_read_unlock();
-//			INIT_LIST_HEAD(&sd->skb_rx_list);
-//		}
-//#else
 		while ((skb = __skb_dequeue(&sd->process_queue))) {
 			rcu_read_lock();
 			__netif_receive_skb(skb);
@@ -5443,7 +5345,7 @@ static int process_backlog(struct napi_struct *napi, int quota)
 				return work;
 
 		}
-//#endif
+
 		local_irq_disable();
 		rps_lock(sd);
 		if (skb_queue_empty(&sd->input_pkt_queue)) {
