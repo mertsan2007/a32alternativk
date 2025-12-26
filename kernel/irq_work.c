@@ -160,8 +160,7 @@ static void irq_work_run_list(struct llist_head *list)
 		 */
 		flags = atomic_read(&work->flags) & ~IRQ_WORK_PENDING;
 		atomic_xchg(&work->flags, flags);
-
-		check_start_time(ts);
+		
 		work->func(work);
 		check_process_time("irq_work %ps", ts, work->func);
 		/*
