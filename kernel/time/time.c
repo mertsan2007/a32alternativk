@@ -156,7 +156,22 @@ SYSCALL_DEFINE2(gettimeofday, struct timeval __user *, tv,
 	}
 	return 0;
 }
+/*
+ * Indicates if there is an offset between the system clock and the hardware
+ * clock/persistent clock/rtc.
+ */
+int persistent_clock_is_local;
+static inline void warp_clock(void)
+{
+	if (sys_tz.tz_minuteswest != 0) {
+		struct timespec adjust;
 
+		persistent_clock_is_local = 1;
+		adjust.tv_sec = sys_tz.tz_minuteswest * 60;
+		adjust.tv_nsec = 0;
+		timekeeping_inject_offset(&adjust);
+	}
+}
 /*
  * In case for some reason the CMOS clock has not already been running
  * in UTC, but in some local time: The first time we set the timezone,
@@ -190,7 +205,7 @@ int do_sys_settimeofday64(const struct timespec64 *tv, const struct timezone *tz
 		if (firsttime) {
 			firsttime = 0;
 			if (!tv)
-				timekeeping_warp_clock();
+				warp_clock();
 		}
 	}
 	if (tv)

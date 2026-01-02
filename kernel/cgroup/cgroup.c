@@ -5779,28 +5779,6 @@ void cgroup_post_fork(struct task_struct *child)
 			css_set_move_task(child, NULL, cset, false);
 		}
 
-		/*
-		 * If the cgroup has to be frozen, the new task has too.
-		 * Let's set the JOBCTL_TRAP_FREEZE jobctl bit to get
-		 * the task into the frozen state.
-		 */
-		if (unlikely(cgroup_task_freeze(child))) {
-			struct cgroup *cgrp;
-
-			spin_lock(&child->sighand->siglock);
-			WARN_ON_ONCE(child->frozen);
-			cgrp = cset->dfl_cgrp;
-			child->jobctl |= JOBCTL_TRAP_FREEZE;
-			spin_unlock(&child->sighand->siglock);
-
-			/*
-			 * Calling cgroup_update_frozen() isn't required here,
-			 * because it will be called anyway a bit later
-			 * from do_freezer_trap(). So we avoid cgroup's
-			 * transient switch from the frozen state and back.
-			 */
-		}
-
 		spin_unlock_irq(&css_set_lock);
 	}
 
@@ -5850,11 +5828,6 @@ void cgroup_exit(struct task_struct *tsk)
 		css_set_move_task(tsk, cset, NULL, false);
 		list_add_tail(&tsk->cg_list, &cset->dying_tasks);
 		cset->nr_tasks--;
-
-		if (unlikely(cgroup_task_frozen(tsk)))
-			cgroup_freezer_frozen_exit(tsk);
-		else if (unlikely(cgroup_task_freeze(tsk)))
-			cgroup_update_frozen(task_dfl_cgroup(tsk));
 
 		spin_unlock_irq(&css_set_lock);
 	} else {
